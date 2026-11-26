@@ -1,56 +1,67 @@
 # Antigravity Codex Subagent
 
-在 Google Antigravity CLI 或 IDE 中，把任务交给 Codex。Gemini 通过 `codex.py` 调用官方 Python SDK。任务运行期间，Gemini 可以在同一个回合追加指令。关闭反重力后，也可以找回会话继续。
+[简体中文](README.zh-CN.md)
 
-## 安装
+Ask Gemini in Antigravity CLI or IDE to work with Codex on a local Windows project. You can read Codex's progress, give it a new instruction while it's working, and pick up the same conversation after restarting Antigravity. Gemini sends each message through the official Python Codex SDK.
 
-需要 Windows、Python 3.10 或更高版本，以及已配置登录的 Codex 账号。在 PowerShell 中运行：
+## Before you start
 
-```powershell
-git clone https://github.com/white-inker/antigravity-codex-subagent.git
-Set-Location -LiteralPath .\antigravity-codex-subagent -ErrorAction Stop
-$config = Join-Path $env:USERPROFILE '.gemini/config'
-$skill = Join-Path $config 'skills/codex-delegate'
-$scripts = Join-Path $skill 'scripts'
-New-Item -ItemType Directory -Path "$config/agents", $scripts -Force | Out-Null
-Copy-Item .\agents\codex.md "$config/agents/" -Force
-Copy-Item .\skills\codex-delegate\SKILL.md $skill -Force
-Copy-Item .\skills\codex-delegate\scripts\*.py, .\skills\codex-delegate\scripts\requirements.txt $scripts -Force
-python -m venv "$scripts/.venv"
-if ($LASTEXITCODE -ne 0) { throw 'Could not create the SDK environment' }
-& "$scripts/.venv/Scripts/python.exe" -m pip install -r "$scripts/requirements.txt"
-if ($LASTEXITCODE -ne 0) { throw 'Could not install the Codex SDK' }
-& "$scripts/.venv/Scripts/python.exe" "$scripts/codex.py" --action list
-```
+- Install Antigravity CLI or IDE on Windows.
+- Make sure `git --version` and `python --version` work in PowerShell. Use Python 3.10 or later.
+- Set up Codex authentication for the Windows user who runs Antigravity. If you already use the Codex CLI, run `codex login status` to check your sign-in. [Codex authentication](https://developers.openai.com/codex/auth)
 
-安装会更新同名的 skill 和代理文件。打开新的反重力会话即可加载。早期版本使用的 `codex.mjs` 入口已迁移到 `codex.py`，已有 Codex 会话仍按原 `threadId` 续接。
+## Install the skill
 
-## 使用
+1. In PowerShell, clone the repository and open its directory.
 
-| 场景 | 对 Gemini 说 | 实际调用 |
+   ```powershell
+   git clone https://github.com/white-inker/antigravity-codex-subagent.git
+   Set-Location -LiteralPath .\antigravity-codex-subagent -ErrorAction Stop
+   ```
+
+2. Run the installer. If you edited a previous installation's skill or agent files, save your changes first.
+
+   ```powershell
+   python manage.py install
+   ```
+
+   The installer creates a private Python environment, installs the pinned SDK, and copies the skill and agent files into `%USERPROFILE%\.gemini\config`. It prints `Installation verified.` after the runner successfully queries local session history.
+
+3. Open a new Antigravity conversation in this repository to load the skill.
+
+## Try a read-only task
+
+Ask Gemini:
+
+> Use Codex to inspect this repository in read-only mode. Name the session test-guide. Which file tests live steering, and how do I run it?
+
+Codex should identify `tests/test_steering.py`. Once it replies, ask “What does that test check before it sends the extra instruction?” Gemini sends the follow-up to the same thread. To authorize changes, say what Codex may edit. You can also specify a model and reasoning effort in your request.
+
+## Monitor, steer, or resume a task
+
+| When | What to say to Gemini | What to expect |
 | --- | --- | --- |
-| 开始委派 | “用 Codex 查登录测试失败的原因，命名为登录修复。” | `new`，返回线程和回合 ID |
-| 查看进度 | “Codex 查到哪里了？测试输出了什么？” | Gemini 用 `manage_task` 读取原后台任务的最新输出 |
-| Codex 正在查 | “补充一下，只看令牌过期那条路径。” | `steer`，向活跃回合投递消息 |
-| 本轮已完成 | “按刚才的结论修，补一个测试。” | `resume`，同一线程开启下一轮 |
-| 重启或切换 CLI / IDE | “继续 Codex 的登录修复会话。” | `list` 找到原工作目录和线程，再续接 |
-| 开启聊天 | “我要和 Codex 对话。”接着问“你是谁？” | 原样投递给 Codex，回传 SDK 的 `finalResponse` |
+| A task is running | “What is Codex doing? Show me the latest test output.” | Gemini reads the original background task's log. It can see public messages, commands, output, exit status, and changed file paths. |
+| You want to redirect ongoing work | “Also check what happens if the turn finishes before the message arrives.” | `steer` delivers the instruction to the active turn. An `accepted` receipt confirms delivery. The final answer comes from the original task. |
+| The turn has finished | “Continue test-guide and explain how it handles an expired turn ID.” | `resume` starts the next turn in the same Codex thread. |
+| You reopened Antigravity or switched between CLI and IDE | “List my Codex sessions, then continue test-guide.” | Gemini looks up the saved thread and its working directory. |
 
-`steer` 通过 Windows 本地命名管道把消息交给正在运行的 SDK 进程，后者调用 `turn.steer()`。返回的 `accepted` 表示 Codex 已接收，最终答复仍由原后台任务给出。旧回合 ID 会被拒绝。指令在 Codex 下一次处理输入时生效，已执行的操作仍然保留。
+For ongoing chat, say “I want to talk to Codex.” Say “Back to Gemini” to end forwarding. When switching clients, use the same Windows user, Codex home (`CODEX_HOME` if set), and original project directory or worktree.
 
-运行期间，stderr 提供 Codex 的公开进度消息、命令与输出、退出状态和变动文件路径。stdout 在结束时返回一份 UTF-8 JSON，其中 `finalResponse` 是可直接转发的答复。
+## Maintain the installation
 
-新建和续接可以指定 `--model`、`--effort` 和本轮允许的写入权限。运行中插话沿用当前回合的设置。CLI 和 IDE 应使用相同的 Windows 用户、Codex 历史目录和原工作树。每轮结果的 `usage` 可用来计算实际的 KV 缓存命中率。[OpenAI Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching)
+Run these commands from your clone in PowerShell.
 
-Gemini 实际执行的 PowerShell 命令和参数见 [SKILL.md](skills/codex-delegate/SKILL.md)。可选的原生子代理窗口使用 [codex.md](agents/codex.md)。
+| Task | Command | Result |
+| --- | --- | --- |
+| Update the skill | `python manage.py update` | Pulls the latest commit with `--ff-only`, installs it, and verifies the installation. Open a new Antigravity conversation to load the changes. |
+| Check the installation | `python manage.py check` | Checks the installed files and queries local history. An empty session list is valid. |
+| Run the integration test | `python manage.py test` | Runs the repository's test with the installed SDK, a temporary Codex home, and a local mock model. A passing run ends with `OK`. |
 
-## 运行测试
+## Troubleshoot a session
 
-完成安装后，在仓库根目录执行：
+- **The skill is missing.** Run `python manage.py check` from the clone. If files or the SDK environment are missing, run `python manage.py install` and open a new Antigravity conversation.
+- **Codex reports that the thread is already running.** Ask Gemini to read the original task's progress. To change its direction, send the instruction to that active turn with `steer`.
+- **A steering request finds no active turn.** Check the original task's status. If it finished, use `resume`. If it's still running, use its recorded working directory and the thread and turn IDs from its log.
 
-```powershell
-$python = Join-Path $env:USERPROFILE '.gemini/config/skills/codex-delegate/scripts/.venv/Scripts/python.exe'
-& $python -m unittest discover -s tests -v
-```
-
-集成测试使用临时 `CODEX_HOME` 和本地模拟模型，验证任务完成前能读到中文进度、向原回合插话，并在结束后恢复同一线程。
+For exact PowerShell calls, permission modes, and JSON output fields, see the [skill instructions](skills/codex-delegate/SKILL.md). For the optional native Antigravity subagent window, see the [agent definition](agents/codex.md).
