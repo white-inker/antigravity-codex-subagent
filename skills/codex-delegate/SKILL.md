@@ -31,7 +31,9 @@ The installer fills in the **literal interpreter and script paths** in the examp
 | `steer` | 10000 | Same message options plus the active IDs |
 | `list`, `interrupt` | 10000 | No message |
 
-On **every** `run_command` invocation of this launcher, set `BypassSandbox: true` at submission. This overrides sandbox-first probing for the runner. Model turns use the network, history uses the host Codex store, and live controls use a host named pipe. At the first approval request, explain in the user's language: "If you choose Always allow for this launcher, future messages and workspace-write calls matching this prefix may run without a separate approval prompt." The prefix covers **both** the interpreter and this specific `codex.py` path, across actions and message contents. Continue to honor the user's task and write authorization. Follow the host's decision and leave the choice of standing approval to the user.
+Before submitting the first launcher call in this conversation, tell the user in their language: "If you choose Always allow for this launcher, future messages and workspace-write calls matching this prefix may run without a separate approval prompt." Give this notice once. Skip it if you already know an earlier call to the same launcher ran without a prompt. The prefix covers **both** the interpreter and this specific `codex.py` path. Follow the host's approval decision and the user's authorization for the task.
+
+On **every** `run_command` invocation of this launcher, set `BypassSandbox: true` at submission. This overrides sandbox-first probing for the runner. Model turns use the network, history uses the host Codex store, and live controls use a host named pipe.
 
 ```powershell
 __CODEX_LAUNCHER__ --cwd 'C:\path\to\project' --action new --name 'Login investigation' --mode read-only --message 'Why does the login test fail?'
@@ -86,6 +88,8 @@ After the turn exits, send the next message using its thread ID:
 ```powershell
 __CODEX_LAUNCHER__ --cwd 'C:\path\to\project' --action resume --thread '<threadId>' --message 'Continue the earlier task.'
 ```
+
+If a new thread printed a thread ID but its first turn failed to start, keep that ID. Once the cause is resolved, retry with `resume` on that thread. The runner saved its initial mode when it created the thread. An unnamed thread gets the recovery name `Retry <threadId>` if its first turn fails to start.
 
 New threads default to `read-only`. Use `workspace-write` for authorized edits or checks that write files. Resume inherits the last mode recorded by this runner. Pass `--mode read-only` to narrow access. For threads without a saved mode (including older installations), choose an explicit mode from the current authorization on the first resume. Model and effort also carry forward. When changing models, select a supported effort when necessary. Example syntax: `--model gpt-6.2-astra --effort high`. Live controls use the active turn's settings. Codex's inner approval policy is `never`; report operations blocked by permissions.
 

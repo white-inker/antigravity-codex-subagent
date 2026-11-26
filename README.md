@@ -53,7 +53,7 @@ The agent reports the available IDs when a task starts in the background and rel
 
 ## Reuse workspace permissions
 
-New sessions default to read-only. Authorize edits for a task to start it in workspace-write mode. Later turns inherit the last mode recorded by the runner. An explicit mode change becomes the new default for that thread. Older threads without a recorded mode require an explicit choice once. Steering keeps the active turn's settings.
+New sessions default to read-only. Authorize edits for a task to start it in workspace-write mode. The runner saves this choice when it creates the thread. If the first turn fails to start, fix the cause and retry with the thread ID from the original task. `resume` inherits the saved mode. An explicit mode change becomes the new default for that thread once the resumed turn starts. Older threads without a recorded mode require an explicit choice once. Steering keeps the active turn's settings.
 
 The final result includes a deduplicated `changedFiles` list from completed Codex patch events. Renames include the old and new paths. Inspect the workspace separately for changes made by shell commands or partial failures. An interrupt requests a graceful stop and leaves already-applied changes in place.
 
@@ -78,6 +78,6 @@ Run these commands from your clone in PowerShell.
 - **Git is missing.** Install Git for Windows and confirm `git --version` works, or use `--non-git` to start without the repository check.
 - **The provider rejects a model or effort.** Check the reported model and effort. When you change the model, specify an effort it supports to override the inherited value.
 
-At the first launcher approval, the agent explains what “Always allow” covers. A standing approval for the installed interpreter **and** this runner can allow future messages and `workspace-write` calls without another prompt. You can choose a one-time approval instead. Codex uses `approvalPolicy: never` inside the turn and reports operations that need elevated permissions.
+Before its first launcher call in a conversation, the agent explains what “Always allow” covers. It skips the notice if it already knows a previous call to the same launcher ran without a prompt. A standing approval for the installed interpreter **and** this runner can allow future messages and `workspace-write` calls without another prompt. You can choose a one-time approval instead. Codex uses `approvalPolicy: never` inside the turn and reports operations that need elevated permissions.
 
 For exact PowerShell calls, UTF-8 file input, history pagination, and JSON output fields, see the [skill instructions](skills/codex-delegate/SKILL.md). For the optional native Antigravity subagent window, see the [agent definition](agents/codex.md).

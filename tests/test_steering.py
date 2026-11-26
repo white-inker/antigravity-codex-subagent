@@ -183,6 +183,29 @@ class SteeringTest(unittest.TestCase):
         restored = call("--action", "resume", "--thread", thread_id, "--mode", "workspace-write", message="Legacy")
         self.assertEqual(restored["mode"], "workspace-write")
 
+    def test_resume_inherits_mode_after_first_turn_fails_to_start(self):
+        fail_start = """\
+import runpy
+from unittest.mock import patch
+from openai_codex import CodexError, Thread
+with patch.object(Thread, "turn", side_effect=CodexError("not logged in")):
+    runpy.run_path("codex.py", run_name="__main__")
+"""
+        self.server.release.set()
+        for options, mode in [(["--name", "retry-start", "--mode", "workspace-write"], "workspace-write"),
+                              ([], "read-only")]:
+            with self.subTest(options=options):
+                first = subprocess.run(
+                    [sys.executable, "-c", fail_start, "--action", "new", "--cwd", str(self.project),
+                     "--non-git", *options, "--message", "Start work"],
+                    cwd=RUNNER.parent, env=self.env, capture_output=True, encoding="utf-8", timeout=30)
+                self.assertEqual(first.returncode, 1, first.stderr)
+                self.assertIn("not logged in", first.stderr)
+                thread_id, = [line.removeprefix("[codex] Thread ID: ") for line in first.stderr.splitlines()
+                              if line.startswith("[codex] Thread ID: ")]
+                retry = self.call("--action", "resume", "--thread", thread_id, "--message", "Retry")
+                self.assertEqual((retry["threadId"], retry["mode"], retry["status"]), (thread_id, mode, "completed"))
+
     def test_failed_model_request_keeps_thread_name_and_diagnostics(self):
         self.server.reject_effort = True
         p = subprocess.run([sys.executable, str(RUNNER), "--cwd", str(self.project), "--non-git",

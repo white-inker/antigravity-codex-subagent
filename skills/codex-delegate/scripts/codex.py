@@ -248,6 +248,7 @@ def run_turn(client, args, prompt, cwd):
             params["config"] = {"model_reasoning_effort": ReasoningEffort(effort).value}
         params["sandbox"] = mode
         name_warning = None
+        thread = None
         try:
             response = client.thread_resume(args.thread, params) if args.thread else client.thread_start(params)
             opened = response.thread.id
@@ -255,6 +256,7 @@ def run_turn(client, args, prompt, cwd):
                 raise RuntimeError("Codex resumed a different thread.")
             if not args.thread:
                 locks.enter_context(own_thread(opened))
+                save_mode(opened, mode)
             print(f"[codex] Working directory: {cwd}\n[codex] Thread ID: {opened}", file=sys.stderr, flush=True)
             thread = Thread(client, opened)
             if args.name and not args.thread:
@@ -267,9 +269,17 @@ def run_turn(client, args, prompt, cwd):
             effort = effort or response.reasoning_effort
             turn = thread.turn(prompt, sandbox=Sandbox(mode), effort=ReasoningEffort(effort) if effort else None)
         except CodexError as exc:
-            raise RuntimeError(model_error(str(exc), model, effort)) from exc
+            diagnostic = model_error(str(exc), model, effort)
+            if thread is not None and not args.thread and (not args.name or name_warning):
+                # The SDK persists an empty thread when it receives a name.
+                try:
+                    thread.set_name(args.name or f"Retry {thread.id}")
+                except CodexError as save_error:
+                    diagnostic += f" Could not save thread {thread.id} for retry: {save_error}"
+            raise RuntimeError(diagnostic) from exc
         with steering_endpoint(turn):
-            save_mode(opened, mode)
+            if args.thread and args.mode:
+                save_mode(opened, mode)
             print(f"[codex] Turn ID: {turn.id}", file=sys.stderr, flush=True)
             result = collect(turn)
         if result["status"] == "failed":
