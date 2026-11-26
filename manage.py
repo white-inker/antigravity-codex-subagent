@@ -3,6 +3,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -24,16 +25,23 @@ FILES = (
 )
 
 
+def launcher_prefix(exe, runner):
+    exe = str(exe)
+    command = exe if re.fullmatch(r"[A-Za-z]:[\\\w.\-]+", exe, re.ASCII) else "& '" + exe.replace("'", "''") + "'"
+    runner = str(runner).replace("'", "''")
+    return f"{command} '{runner}'"
+
+
 def deploy(relative, config):
     destination = config / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     data = (ROOT / relative).read_bytes()
     if relative in (SKILL / "SKILL.md", SKILL / "references" / "usage.md"):
         scripts = (config / SCRIPTS).resolve()
-        exe = str(scripts / ".venv" / "Scripts" / "python.exe").replace("'", "''")
+        exe = scripts / ".venv" / "Scripts" / "python.exe"
         for suffix in ("ro", "rw"):
-            runner = str(scripts / f"codex_{suffix}.py").replace("'", "''")
-            data = data.replace(f"__CODEX_{suffix.upper()}__".encode(), f"& '{exe}' '{runner}'".encode("utf-8"))
+            prefix = launcher_prefix(exe, scripts / f"codex_{suffix}.py")
+            data = data.replace(f"__CODEX_{suffix.upper()}__".encode(), prefix.encode("utf-8"))
     if destination.is_file() and destination.read_bytes() == data:
         return
     # Publish a complete file even if another Antigravity window is reading it.

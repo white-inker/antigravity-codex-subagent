@@ -26,6 +26,6 @@ Keep direct-chat routing in `<appDataDir>\brain\<conversation-id>\scratch\codex-
 
 While a turn runs, use the same launcher, canonical directory, and `--thread` and `--turn` IDs with `--action steer`. If the turn ID is missing, inspect the original log once. If it is still unavailable, tell the user their message has not been sent and can be resent when Codex is ready. Once the turn ends, use `--action resume --thread '<threadId>'`. Retry a steer as a resume only if the original task has ended and delivery failed definitively. Use `interrupt` when asked to stop. Confirm the stop on the original task's `interrupted` result and exit 130.
 
-Use `--message 'text'` for short messages. For literal or private input, write a unique UTF-8 scratch file named `codex-message-<32 hex digits>.txt` and pass its absolute path via `--consume-message-file`. The launcher deletes it as it reads the message. Use `--message-file` for existing files that should be kept.
+Use `--message 'text'` for short messages. For literal or private input, write a unique UTF-8 scratch file named `codex-message-<32 hex digits>.txt`. Pass its absolute path via `--consume-message-file` under the installed Antigravity profile. The launcher deletes it after Codex accepts the message. If the turn ended before a steer arrived, reuse the same file for the authorized resume. Use `--message-file` for input files to keep.
 
 Read [launcher examples and troubleshooting](references/usage.md) for exact commands, approval migration, recovery, model settings, and result fields.

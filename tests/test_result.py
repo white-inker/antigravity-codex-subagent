@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/codex-delegate/scripts"))
-from codex import collect, consume_message, model_error, run_turn
+from codex import TOKEN_FIELDS, collect, model_error, run_turn, scratch_message_path
 from workspace import workspace_changes, workspace_snapshot
 from openai_codex.generated.v2_all import ThreadItem
 
@@ -38,20 +38,38 @@ class ResultTest(unittest.TestCase):
         self.assertEqual(result["finalResponse"], "First\n\nLast")
         self.assertEqual((empty["status"], empty["finalResponse"]), ("completed", ""))
 
-    def test_consume_invalid_utf8_cleans_up_without_deleting_other_files(self):
+    def test_scratch_messages_must_be_in_the_current_antigravity_profile(self):
         with tempfile.TemporaryDirectory() as temp:
-            scratch = Path(temp, "brain", "conversation", "scratch")
+            profile = Path(temp)
+            scratch = profile / ".gemini/antigravity/brain/conversation/scratch"
             scratch.mkdir(parents=True)
             existing = scratch / "instructions.txt"
             existing.write_bytes(b"keep")
-            with self.assertRaisesRegex(ValueError, "requires an absolute"):
-                consume_message(existing)
-            self.assertEqual(existing.read_bytes(), b"keep")
-            generated = scratch / f"codex-message-{'f' * 32}.txt"
-            generated.write_bytes(b"\xff")
-            with self.assertRaises(UnicodeDecodeError):
-                consume_message(generated)
-            self.assertFalse(generated.exists())
+            filename = f"codex-message-{'f' * 32}.txt"
+            generated = scratch / filename
+            generated.write_bytes(b"message")
+            outside = profile / "brain/conversation/scratch" / filename
+            outside.parent.mkdir(parents=True)
+            outside.write_bytes(b"unrelated")
+            with patch.object(Path, "home", return_value=profile):
+                self.assertEqual(scratch_message_path(generated), generated)
+                for path in (outside, existing):
+                    with self.assertRaisesRegex(ValueError, "current user's"):
+                        scratch_message_path(path)
+
+    def test_usage_is_difference_between_cumulative_snapshots(self):
+        def usage(total, last):
+            counts = SimpleNamespace(
+                total=SimpleNamespace(**dict.fromkeys(TOKEN_FIELDS, total)),
+                last=SimpleNamespace(**dict.fromkeys(TOKEN_FIELDS, last)))
+            return SimpleNamespace(method="thread/tokenUsage/updated", payload=SimpleNamespace(token_usage=counts))
+
+        complete = SimpleNamespace(method="turn/completed", payload=SimpleNamespace(
+            turn=SimpleNamespace(status=SimpleNamespace(value="completed"))))
+        first = usage(110, 10)
+        events = [first, first, usage(145, 5), complete]
+        result = collect(SimpleNamespace(stream=lambda: iter(events)))
+        self.assertEqual(result["usage"], dict.fromkeys(TOKEN_FIELDS, 45))
 
     def test_workspace_changes_include_shell_writes_and_exclude_preexisting_files(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -63,9 +81,13 @@ class ResultTest(unittest.TestCase):
             before = workspace_snapshot(cwd)
             (cwd / "modified.txt").write_text("new content", encoding="utf-8")
             (cwd / "created.txt").write_text("written by tool", encoding="utf-8")
-            changes = workspace_changes(cwd, before, ["modified.txt"])
+            alias = str(Path("nested") / ".." / "modified.txt")
+            changes = workspace_changes(cwd, before, [alias, "modified.txt"])
             self.assertEqual(changes, {"changeTracking": "sdk-patches-and-git-worktree",
-                                       "changedFiles": ["modified.txt", "created.txt"]})
+                                       "changedFiles": [alias, "created.txt"]})
+            with patch("workspace.MAX_SNAPSHOT_FILES", 1):
+                self.assertEqual(workspace_changes(cwd, before, []),
+                                 {"changeTracking": "sdk-patches", "changeTrackingReason": "snapshot-file-limit"})
 
     def test_changed_files_in_interrupted_turn(self):
         events = [

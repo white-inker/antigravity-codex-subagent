@@ -2,6 +2,10 @@
 import os
 from pathlib import Path
 import subprocess
+from time import monotonic
+
+MAX_SNAPSHOT_FILES = 10000
+SNAPSHOT_TIMEOUT = 3
 
 
 def git_executable():
@@ -17,33 +21,48 @@ def git_executable():
 def workspace_snapshot(cwd):
     git = git_executable()
     if git is None:
-        return None
+        return None, "git-not-available"
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0")
+    deadline = monotonic() + SNAPSHOT_TIMEOUT
     try:
         files = subprocess.run(
             [git, "-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others",
              "--exclude-standard", "--", "."],
-            cwd=cwd, env=env, capture_output=True, check=True, timeout=10).stdout
+            cwd=cwd, env=env, capture_output=True, check=True, timeout=SNAPSHOT_TIMEOUT).stdout
+        if files.count(b"\0") > MAX_SNAPSHOT_FILES:
+            return None, "snapshot-file-limit"
         snapshot = {}
         for entry in files.split(b"\0")[:-1]:
+            if monotonic() >= deadline:
+                return None, "snapshot-time-limit"
             path = cwd / os.fsdecode(entry)
             try:
                 info = path.lstat()
             except FileNotFoundError:
                 continue
             snapshot[path] = (info.st_mode, info.st_size, info.st_mtime_ns, info.st_ino)
-        return snapshot
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return None
+        return snapshot, None
+    except subprocess.TimeoutExpired:
+        return None, "snapshot-time-limit"
+    except subprocess.CalledProcessError:
+        return None, "git-list-failed"
+    except OSError:
+        return None, "snapshot-io-error"
 
 
 def workspace_changes(cwd, before, patches):
-    after = workspace_snapshot(cwd) if before is not None else None
-    if after is None:
+    if before is None:
         return {"changeTracking": "sdk-patches"}
-    paths = dict.fromkeys(os.path.normcase(os.path.abspath(cwd / path)) for path in patches)
-    changed = list(patches)
-    for path in sorted(before.keys() | after.keys()):
-        if before.get(path) != after.get(path) and os.path.normcase(str(path)) not in paths:
-            changed.append(os.path.relpath(path, cwd))
-    return {"changedFiles": changed, "changeTracking": "sdk-patches-and-git-worktree"}
+    original, reason = before
+    if reason is not None:
+        return {"changeTracking": "sdk-patches", "changeTrackingReason": reason}
+    after, reason = workspace_snapshot(cwd)
+    if reason is not None:
+        return {"changeTracking": "sdk-patches", "changeTrackingReason": reason}
+    changed = {}
+    for path in patches:
+        changed.setdefault(os.path.normcase(os.path.realpath(cwd / path)), path)
+    for path in sorted(original.keys() | after.keys()):
+        if original.get(path) != after.get(path):
+            changed.setdefault(os.path.normcase(os.path.realpath(path)), os.path.relpath(path, cwd))
+    return {"changedFiles": list(changed.values()), "changeTracking": "sdk-patches-and-git-worktree"}

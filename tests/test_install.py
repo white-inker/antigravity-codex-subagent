@@ -11,6 +11,11 @@ import manage
 
 @unittest.skipUnless(sys.platform == "win32", "Windows PowerShell launcher")
 class InstallTest(unittest.TestCase):
+    def test_safe_executable_path_starts_the_approval_prefix(self):
+        exe = Path(r"C:\Users\sample\.venv\Scripts\python.exe")
+        runner = Path(r"C:\Users\sample\codex_ro.py")
+        self.assertEqual(manage.launcher_prefix(exe, runner), f"{exe} '{runner}'")
+
     def test_launcher_in_profile_with_spaces_and_apostrophe(self):
         with tempfile.TemporaryDirectory() as temp:
             config = Path(temp) / "O'Brien profile" / ".gemini" / "config"

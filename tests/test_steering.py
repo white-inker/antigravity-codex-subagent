@@ -90,7 +90,7 @@ class SteeringTest(unittest.TestCase):
             'model = "gpt-5.4"\nmodel_reasoning_effort = "low"\nmodel_provider = "test"\n[model_providers.test]\n'
             f'name = "test"\nbase_url = "http://127.0.0.1:{server.server_port}/v1"\n'
             'wire_api = "responses"\nsupports_websockets = false\n', encoding="utf8")
-        env = dict(os.environ, CODEX_HOME=str(home), HTTP_PROXY="http://127.0.0.1:1",
+        env = dict(os.environ, CODEX_HOME=str(home), USERPROFILE=str(root / "profile"), HTTP_PROXY="http://127.0.0.1:1",
                    HTTPS_PROXY="http://127.0.0.1:1", NO_PROXY="127.0.0.1,localhost")
         for key in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"):
             env.pop(key, None)
@@ -140,7 +140,7 @@ class SteeringTest(unittest.TestCase):
                 call("--action", "resume", "--thread", thread_id, message="overlap",
                      error="already has a delegated", launcher=WRITER)
                 message = "请检查这段原文：\r\n'@\r\nKeep $name unchanged."
-                scratch = root / "brain" / "conversation" / "scratch"
+                scratch = Path(env["USERPROFILE"]) / ".gemini/antigravity-cli/brain/conversation/scratch"
                 scratch.mkdir(parents=True)
                 message_file = scratch / f"codex-message-{'a' * 32}.txt"
                 message_file.write_bytes(message.encode("utf-8"))
@@ -184,6 +184,14 @@ class SteeringTest(unittest.TestCase):
                         "--message", "Switch back with default effort", launcher=WRITER)
         self.assertEqual(switched["effort"], "low")
         self.assertEqual(server.requests[-1]["reasoning"]["effort"], "low")
+        message_file.write_bytes(message.encode("utf-8"))
+        scratch_args = ("--consume-message-file", str(message_file))
+        call(*route, turn_id, *scratch_args, error="No active turn", launcher=WRITER)
+        self.assertEqual(message_file.read_bytes(), message.encode("utf-8"))
+        call("--action", "resume", "--thread", thread_id, *scratch_args, launcher=WRITER)
+        self.assertFalse(message_file.exists())
+        user_items = [item for item in server.requests[-1]["input"] if item.get("role") == "user"]
+        self.assertEqual(user_items[-1]["content"][-1]["text"], message)
         downgraded = call("--action", "resume", "--thread", thread_id, "--mode", "read-only", "--message", "Inspect")
         self.assertEqual(downgraded["mode"], "read-only")
         self.assertEqual(call("--action", "resume", "--thread", thread_id, "--message", "Inspect again")["mode"], "read-only")

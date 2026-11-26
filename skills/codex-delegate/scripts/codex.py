@@ -14,6 +14,7 @@ from tempfile import NamedTemporaryFile
 from openai_codex import CodexConfig, CodexError, Sandbox, Thread
 from openai_codex.client import CodexClient
 from openai_codex.generated.v2_all import ReasoningEffort
+from pydantic import ValidationError
 
 from steering import control_turn, identifier, own_thread, steering_endpoint
 from workspace import git_executable, workspace_changes, workspace_snapshot
@@ -80,6 +81,7 @@ def scan_history(client, args, lookups):
     sessions = []
     target = args.limit or (50 if args.all else 20)
     scanned = 0
+    skipped = 0
     cursor = args.cursor
     params = {"sourceKinds": ["exec", "appServer", "cli", "vscode", "unknown"] if args.all
               else ["exec", "vscode", "appServer"], "sortKey": "updated_at",
@@ -90,8 +92,13 @@ def scan_history(client, args, lookups):
     if workspace:
         params["cwd"] = str(workspace.resolve(strict=True))
 
+    unreadable = object()
+
     def legacy_source(thread_id):
-        return client.thread_read(thread_id, include_turns=False).thread.thread_source
+        try:
+            return client.thread_read(thread_id, include_turns=False).thread.thread_source
+        except (CodexError, ValidationError):
+            return unreadable
 
     for _ in range(5):
         # The cursor points past the whole page, so return all its matches.
@@ -108,10 +115,12 @@ def scan_history(client, args, lookups):
                 source = row.get("threadSource")
                 if source is None:
                     source = legacy_sources.get(row["id"], SOURCE)
+                if source is unreadable:
+                    skipped += 1
                 if source != SOURCE:
                     continue
             sessions.append({
-                "threadId": row["id"], "name": row.get("name") or row["preview"][:72] or row["id"],
+                "threadId": row["id"], "name": row.get("name") or (row.get("preview") or "")[:72] or row["id"],
                 "workingDirectory": row["cwd"],
                 "updatedAt": datetime.fromtimestamp(row["updatedAt"], timezone.utc).isoformat(),
                 "mode": modes[row["id"]],
@@ -119,7 +128,10 @@ def scan_history(client, args, lookups):
         cursor = page.get("nextCursor")
         if args.all or not cursor or len(sessions) >= target:
             break
-    return {"sessions": sessions, "nextCursor": cursor, "scanned": scanned}
+    result = {"sessions": sessions, "nextCursor": cursor, "scanned": scanned}
+    if skipped:
+        result["skippedUnreadable"] = skipped
+    return result
 
 
 class TurnLog:
@@ -158,15 +170,16 @@ def collect(turn):
     changed_files = {}
     log = TurnLog()
     usage = dict.fromkeys(TOKEN_FIELDS, 0)
-    last_total = None
+    baseline = None
     for event in turn.stream():
         payload = event.payload
         if event.method == "thread/tokenUsage/updated":
             counts = payload.token_usage
-            if counts.total != last_total:
-                for field in TOKEN_FIELDS:
-                    usage[field] += getattr(counts.last, field) or 0
-                last_total = counts.total
+            total = {field: getattr(counts.total, field) or 0 for field in TOKEN_FIELDS}
+            if baseline is None:
+                # The first cumulative snapshot already includes the just-finished request.
+                baseline = {field: total[field] - (getattr(counts.last, field) or 0) for field in TOKEN_FIELDS}
+            usage = {field: total[field] - baseline[field] for field in TOKEN_FIELDS}
         elif event.method == "item/agentMessage/delta":
             log.chunk(payload.item_id, "message", payload.delta)
         elif event.method == "item/commandExecution/outputDelta":
@@ -251,7 +264,7 @@ def model_error(message, model, effort):
     return diagnostic
 
 
-def run_turn(client, args, prompt, cwd):
+def run_turn(client, args, prompt, cwd, scratch_message=None):
     with ExitStack() as locks:
         params = {"cwd": str(cwd), "approvalPolicy": "never"}
         if args.thread:
@@ -308,6 +321,7 @@ def run_turn(client, args, prompt, cwd):
                     print(f"[codex] {name_warning}", file=sys.stderr, flush=True)
             model = response.model
             turn = thread.turn(prompt, sandbox=Sandbox(mode), effort=ReasoningEffort(effort) if effort else None)
+            remove_delivered_message(scratch_message)
             effort = effort or response.reasoning_effort
         except CodexError as exc:
             diagnostic = model_error(str(exc), model, effort)
@@ -332,21 +346,31 @@ def run_turn(client, args, prompt, cwd):
                 "model": model, "effort": ReasoningEffort(effort).value if effort else None, **result}
 
 
-def consume_message(path):
+def scratch_message_path(path):
+    home = Path.home().resolve()
+    roots = {home / ".gemini" / app / "brain" for app in ("antigravity", "antigravity-cli")}
     if (not path.is_absolute() or path.parent.name.casefold() != "scratch"
-            or path.parent.parent.parent.name.casefold() != "brain"
+            or path.parent.parent.parent not in roots
             or not re.fullmatch(r"codex-message-[0-9a-f]{32}\.txt", path.name, re.IGNORECASE)):
-        raise ValueError("--consume-message-file requires an absolute brain/<conversation>/scratch/codex-message-<32 hex digits>.txt path")
-    if path.resolve(strict=True) != path.parent.resolve(strict=True) / path.name:
+        raise ValueError("--consume-message-file requires a generated message under the current user's "
+                         "Antigravity or Antigravity CLI conversation scratch directory.")
+    resolved = path.resolve(strict=True)
+    if resolved != path or not resolved.is_file():
         raise ValueError("The scratch message must be a regular file in the conversation scratch directory.")
-    # Windows deletes this handle's file on close, including when the process exits.
-    with os.fdopen(os.open(path, os.O_RDONLY | os.O_BINARY | os.O_TEMPORARY), "rb") as message:
-        return message.read().decode("utf-8-sig")
+    return resolved
+
+
+def remove_delivered_message(path):
+    if path is not None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as error:
+            print(f"[codex] Message delivered, but scratch cleanup failed: {error}", file=sys.stderr, flush=True)
 
 
 def main(launcher_mode):
     args = arguments(launcher_mode)
-    prompt = consume_message(args.consume_message_file) if args.consume_message_file is not None else None
+    scratch_message = None
     if args.cwd is not None and args.action != "list":
         os.chdir(args.cwd)
     cwd = Path.cwd().resolve(strict=True)
@@ -355,24 +379,29 @@ def main(launcher_mode):
             raise ValueError(f"Run this command in {args.workspace}")
         if args.action == "interrupt":
             return control_turn(args.thread, args.turn, args.launcher_mode, "interrupt")
-        if prompt is None:
-            if args.message_file is not None:
-                prompt = args.message_file.read_bytes().decode("utf-8-sig")
-            elif args.message is not None:
-                prompt = args.message
-            else:
-                if sys.stdin.isatty():
-                    raise ValueError("Pass a message with --message, a message file, or UTF-8 stdin.")
-                prompt = sys.stdin.buffer.read().decode("utf-8-sig")
+        if args.consume_message_file is not None:
+            scratch_message = scratch_message_path(args.consume_message_file)
+            prompt = scratch_message.read_bytes().decode("utf-8-sig")
+        elif args.message_file is not None:
+            prompt = args.message_file.read_bytes().decode("utf-8-sig")
+        elif args.message is not None:
+            prompt = args.message
+        else:
+            if sys.stdin.isatty():
+                raise ValueError("Pass a message with --message, a message file, or UTF-8 stdin.")
+            prompt = sys.stdin.buffer.read().decode("utf-8-sig")
         if not prompt.strip():
             raise ValueError("The message is empty.")
         if args.action == "steer":
-            return control_turn(args.thread, args.turn, args.launcher_mode, "steer", prompt)
+            receipt = control_turn(args.thread, args.turn, args.launcher_mode, "steer", prompt)
+            if receipt["status"] == "accepted":
+                remove_delivered_message(scratch_message)
+            return receipt
     with CodexClient(CodexConfig(cwd=str(cwd))) as client:
         client.initialize()
         if args.action == "list":
             return list_sessions(client, args)
-        return run_turn(client, args, prompt, cwd)
+        return run_turn(client, args, prompt, cwd, scratch_message)
 
 
 def cli(launcher_mode):

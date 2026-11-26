@@ -4,12 +4,25 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
+from openai_codex import CodexError
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/codex-delegate/scripts"))
 from codex import list_sessions
 
 
 class HistoryTest(unittest.TestCase):
+    def test_unreadable_legacy_row_does_not_hide_the_rest_of_its_page(self):
+        client = Mock()
+        client.thread_read.side_effect = CodexError("Thread was removed.")
+        client.thread_list.return_value.model_dump.return_value = {
+            "data": [{"id": "gone"}, {"id": "valid", "preview": None, "threadSource": "antigravity",
+                                     "cwd": "project", "updatedAt": 0}],
+            "nextCursor": None,
+        }
+        result = list_sessions(client, SimpleNamespace(all=False, cursor=None, workspace=None, limit=1))
+        self.assertEqual(result["skippedUnreadable"], 1)
+        self.assertEqual([session["name"] for session in result["sessions"]], ["valid"])
+
     def test_limit_one_finds_matches_beyond_five_unrelated_threads(self):
         client = Mock()
         rows = [{"id": str(i), "threadSource": "antigravity" if i in (27, 32, 46) else "user",
