@@ -9,6 +9,16 @@ Use the installed Python SDK runner from the current Antigravity agent. An expli
 
 **Direct chat.** When the user asks to enter Codex chat, confirm in their language: "Your next messages will go to Codex. Say 'come back' to return." Forward the intended message verbatim, including greetings and code. Return Codex's actual answer in its original language, unless the user asks for a translation or summary. Treat "come back", "回来", or an equivalent exit instruction as local: confirm "You're back with the Antigravity agent" and end forwarding.
 
+Before forwarding each new chat message, check the state of the preceding turn:
+
+| Preceding turn | How to deliver the new message |
+| --- | --- |
+| Running, IDs known | Send the new message once with `steer` to the active thread and turn, even if the message reads like a separate question. |
+| Running or starting, turn ID unknown | Read the original task log once for the IDs. If still unavailable, tell the user "Codex is still processing your previous message. This message is pending." Keep the message with the original task ID. |
+| Finished | Send the next pending message with `resume` on the same thread. |
+
+On the next task update or user message, handle the oldest pending message first. If a `resume` reports that the thread already has a delegated turn running, its message is still pending. Use the running-turn rule above. If a steer reports no active turn, check the original task. Once it has finished, resume once with the undelivered message. An accepted receipt confirms delivery. If delivery is uncertain, check the outcome before retrying. An exit request ends forwarding and cancels any unsent messages.
+
 **Delegated task.** Preserve the user's instructions. You may append relevant paths, findings, and acceptance criteria under a separate `Context from the Antigravity agent` heading. Distinguish your own follow-ups and assessment from Codex's reply.
 
 ## Launch from any directory
@@ -21,27 +31,33 @@ The installer fills in the **literal interpreter and script paths** in the examp
 | `steer` | 10000 | Same message options plus the active IDs |
 | `list`, `interrupt` | 10000 | No message |
 
-On **every** `run_command` invocation of this launcher, set `BypassSandbox: true` at submission. This overrides sandbox-first probing for the runner. Model turns use the network, history uses the host Codex store, and live controls use a host named pipe. Follow Antigravity's permission decision. If the host offers a standing approval, the user may approve the prefix covering **both** the interpreter and this specific `codex.py` path. Keep that prefix stable. Host policy determines the prompts. Leave approval rules under the user's control.
+On **every** `run_command` invocation of this launcher, set `BypassSandbox: true` at submission. This overrides sandbox-first probing for the runner. Model turns use the network, history uses the host Codex store, and live controls use a host named pipe. At the first approval request, explain in the user's language: "If you choose Always allow for this launcher, future messages and workspace-write calls matching this prefix may run without a separate approval prompt." The prefix covers **both** the interpreter and this specific `codex.py` path, across actions and message contents. Continue to honor the user's task and write authorization. Follow the host's decision and leave the choice of standing approval to the user.
 
 ```powershell
 __CODEX_LAUNCHER__ --cwd 'C:\path\to\project' --action new --name 'Login investigation' --mode read-only --message 'Why does the login test fail?'
 ```
 
-Use single-quoted PowerShell literals for short messages; double a literal apostrophe. For multiline input, quotes that the shell may reinterpret, private text, or exact final newlines, write the intended text using the host's literal text-file facility to a unique UTF-8 file in the Windows temporary directory. An existing UTF-8 file can be passed directly. Supply its absolute path in the same single-command form. Clean up a temporary file you created once the launcher has read it or the task has exited.
+Use single-quoted PowerShell literals for short messages and double a literal apostrophe. For an option-like message, put the value in the same argument as the option: `--message=--help` or `--message=-v`.
+
+For multiline input, shell-sensitive quotes, private text, or exact final newlines, use the host's `write_file` or equivalent literal text-file tool. Write UTF-8 to a unique file under the **current conversation's scratch directory**, `<appDataDir>\brain\<conversation-id>\scratch\`. Resolve the actual directory from the current Antigravity conversation, then pass the same absolute filename to the runner. An existing user-supplied file can be passed directly.
 
 ```powershell
-__CODEX_LAUNCHER__ --cwd 'C:\path\to\project' --action new --name 'Review' --message-file 'C:\path\to\message.txt'
+__CODEX_LAUNCHER__ --cwd 'C:\path\to\project' --action new --name 'Review' --message-file '<appDataDir>\brain\<conversation-id>\scratch\codex-message-<unique-id>.txt'
 ```
 
-For a PowerShell-only client, create the file in a separate preparation step. This example writes three lines, preserving a line beginning with `'@` and a literal `$name`. Use the printed path in `--message-file`.
+For a PowerShell-only client, prepare the file separately in the same conversation scratch directory. Substitute the actual scratch directory before running this example. It preserves a line beginning with `'@` and a literal `$name`.
 
 ```powershell
-$p = [IO.Path]::GetTempFileName()
+$scratch = '<appDataDir>\brain\<conversation-id>\scratch'
+[IO.Directory]::CreateDirectory($scratch) | Out-Null
+$p = Join-Path $scratch ('codex-message-' + [guid]::NewGuid().ToString('N') + '.txt')
 [IO.File]::WriteAllText($p, 'First line
 ''@
 Keep $name exactly as written.', [Text.UTF8Encoding]::new($false))
 $p
 ```
+
+For an inline call, delete your scratch message file when the call exits. For a background call, record the absolute filename with its terminal task ID **before yielding**. On that task's completion notification, delete that exact file, including on failure or interruption. For a steer, associate the file with the steer command that reads it. Only remove files you created for these calls.
 
 ## Hand off a background turn
 
@@ -63,7 +79,7 @@ __CODEX_LAUNCHER__ --cwd 'C:\path\to\project' --action steer --thread '<threadId
 __CODEX_LAUNCHER__ --cwd 'C:\path\to\project' --action interrupt --thread '<threadId>' --turn '<turnId>'
 ```
 
-`interruptRequested` acknowledges the request. The original task reports its terminal status (normally `interrupted`, exit 130). If it finished first, use its actual outcome. Completed edits can remain on disk. Reserve forced termination for an explicitly requested hard stop or an unresponsive task after informing the user. If delivery is unknown, inspect the original outcome before retrying.
+`interruptRequested` acknowledges the control request. When the original task's completion notification shows `status: interrupted` and exit 130 after the user's stop request, report "Stopped as requested." This is the expected stop outcome. If the task finished first, report its actual outcome. Completed edits can remain on disk. Reserve forced termination for an explicitly requested hard stop or an unresponsive task after informing the user. If delivery is unknown, inspect the original outcome before retrying.
 
 After the turn exits, send the next message using its thread ID:
 
@@ -81,13 +97,13 @@ The final JSON includes `status`, `finalResponse`, `changedFiles`, IDs, working 
 __CODEX_LAUNCHER__ --cwd 'C:\path\to\project' --action list --workspace '.' --limit 20
 ```
 
-The runner scans automatically until it finds the requested number of matches or reaches the end, five SDK pages, or 100 candidates. Default target: 20 delegated threads. `--limit` accepts 1 through 50. The result includes `scanned` and a `nextCursor` if more history is available. Continue with the same filters and `--cursor` only if the user needs further results. `--all` returns one page of general Codex history without per-thread source checks. Omit `--workspace` to search across projects.
+The runner reads delegated history in pages of 20 candidates, newest update first. It stops after a page reaches the target, history ends, or five pages have been scanned (up to 100 candidates). `--limit` accepts 1 through 50, default 20. All matches from the last page are returned so the cursor skips none. For the most recent delegation, use `--limit 1` and take the first result. If a search is still empty and `nextCursor` is present, continue with the same filters and `--cursor`. `--all` returns one general-history page limited to the requested count. Omit `--workspace` to search across projects.
 
 For "continue the last session," use the most recent delegation for the current project. When names overlap, show IDs and workspaces. Preserve the user's selection if the original thread or worktree is unavailable.
 
 ## First-use troubleshooting
 
-- **Missing private Python or SDK.** From the repository clone run `python manage.py install`, then `python manage.py check`. Open a new Antigravity conversation to load the installed skill.
+- **Missing private Python or SDK.** Run `__CODEX_MANAGER__ install` followed by `__CODEX_MANAGER__ check`. The installer records the path to this checkout in the installed skill. If it was moved or removed, clone the [project repository](https://github.com/white-inker/antigravity-codex-subagent) and run `python manage.py install` from the directory containing its `manage.py`. Verify that `%USERPROFILE%\.gemini\config\skills\codex-delegate\scripts\.venv\Scripts\python.exe` exists and the check prints `Installation verified.`. Open a new Antigravity conversation.
 - **Sign-in or provider authentication failure.** For a Codex account, run `codex login status` and, if signed out, `codex login` as the same Windows user. For a configured API provider, check its credentials. A successful local history check verifies installation only.
 - **Git missing.** Install Git for Windows and make `git --version` available, or use `--non-git` for a new session when a Git check is unnecessary.
 - **Unsupported model or effort.** Report the provider error and the model/effort pair from the runner. If the inherited effort is incompatible with a new model, pass both flags explicitly on the next authorized attempt.

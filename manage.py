@@ -31,6 +31,8 @@ def deploy(relative, config):
         command = exe if re.fullmatch(r"[A-Za-z]:[\\\w.\-]+", exe, re.ASCII) else "& '" + exe.replace("'", "''") + "'"
         runner = str(scripts / "codex.py").replace("'", "''")
         data = data.replace(b"__CODEX_LAUNCHER__", f"{command} '{runner}'".encode("utf-8"))
+        manager = str(ROOT / "manage.py").replace("'", "''")
+        data = data.replace(b"__CODEX_MANAGER__", f"python '{manager}'".encode("utf-8"))
     if destination.is_file() and destination.read_bytes() == data:
         return
     # Publish a complete file even if another Antigravity window is reading it.

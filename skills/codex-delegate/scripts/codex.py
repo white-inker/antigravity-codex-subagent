@@ -38,7 +38,8 @@ def arguments():
     parser.add_argument("--non-git", action="store_true")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--cursor")
-    parser.add_argument("--limit", type=int, metavar="1..50", help="Maximum matching sessions to return")
+    parser.add_argument("--limit", type=int, metavar="1..50",
+                        help="Target matches; delegated history includes all matches on the last page")
     args = parser.parse_args()
     if args.model is not None:
         args.model = args.model.strip()
@@ -71,8 +72,8 @@ def list_sessions(client, args):
     if args.workspace:
         params["cwd"] = str(args.workspace.resolve(strict=True))
     for _ in range(5):
-        # Size each page to avoid skipping matches at a returned cursor.
-        page = client.thread_list(dict(params, limit=min(target - len(sessions), 100 - scanned),
+        # The cursor points past the whole page, so return all its matches.
+        page = client.thread_list(dict(params, limit=target if args.all else 20,
                                        cursor=cursor)).model_dump(mode="json", by_alias=True)
         scanned += len(page["data"])
         for row in page["data"]:
@@ -88,7 +89,7 @@ def list_sessions(client, args):
                 "updatedAt": datetime.fromtimestamp(row["updatedAt"], timezone.utc).isoformat(),
             })
         cursor = page.get("nextCursor")
-        if args.all or not cursor or len(sessions) == target or scanned == 100:
+        if args.all or not cursor or len(sessions) >= target:
             break
     return {"sessions": sessions, "nextCursor": cursor, "scanned": scanned}
 

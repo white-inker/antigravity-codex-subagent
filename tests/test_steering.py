@@ -137,7 +137,9 @@ class SteeringTest(unittest.TestCase):
                 call(*route, turn_id, cwd=subdirectory, message="wrong workspace", error="No active turn")
                 call("--action", "resume", "--thread", thread_id, message="overlap", error="already has a delegated")
                 message = "请检查这段原文：\r\n'@\r\nKeep $name unchanged."
-                message_file = root / "literal message.txt"
+                scratch = root / "brain" / "conversation" / "scratch"
+                scratch.mkdir(parents=True)
+                message_file = scratch / "literal message.txt"
                 message_file.write_bytes(message.encode("utf-8"))
                 receipt = call(*route, turn_id, "--message-file", str(message_file), cwd=subdirectory / "..")
                 self.assertEqual(receipt, {"status": "accepted", "threadId": thread_id, "turnId": turn_id})
@@ -157,7 +159,9 @@ class SteeringTest(unittest.TestCase):
         self.assertIn(thread_id, [s["threadId"] for s in call("--action", "list")["sessions"]])
         self.assertEqual(result["changedFiles"], [])
         next_turn = call("--action", "resume", "--thread", thread_id, "--cwd", str(project),
-                         "--message", "Follow-up", cwd=root)
+                         "--message=--help", cwd=root)
+        user_items = [item for item in server.requests[-1]["input"] if item.get("role") == "user"]
+        self.assertEqual(user_items[-1]["content"][-1]["text"], "--help")
         self.assertEqual(next_turn["threadId"], thread_id)
         self.assertNotEqual(next_turn["turnId"], turn_id)
         self.assertEqual(next_turn["usage"]["input_tokens"], 10)

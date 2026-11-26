@@ -42,12 +42,14 @@ Codex should identify `tests/test_steering.py`. Once it replies, ask “What doe
 | When | What to say to the Antigravity agent | What to expect |
 | --- | --- | --- |
 | A task is running | “What is Codex doing? Show me the latest test output.” | The agent reads the original background task's log. It can see public messages, commands, output, exit status, and changed file paths. |
-| You want to stop the current task | “Stop that Codex turn.” | The agent sends an SDK interrupt. The original task reports its final status and any confirmed patch paths. |
+| You want to stop the current task | “Stop that Codex turn.” | The agent requests a stop. When the original turn reports `interrupted` (exit 130), the agent confirms it stopped and reports any confirmed patch paths. |
 | You want to redirect ongoing work | “Also check what happens if the turn finishes before the message arrives.” | `steer` delivers the instruction to the active turn. An `accepted` receipt confirms delivery. The final answer comes from the original task. |
 | The turn has finished | “Continue test-guide and explain how it handles an expired turn ID.” | `resume` starts the next turn in the same Codex thread. |
 | You reopened Antigravity or switched between CLI and IDE | “List my Codex sessions, then continue test-guide.” | The agent looks up the saved thread and its working directory. |
 
-For ongoing chat, say “I want to talk to Codex.” The agent confirms that forwarding is active. Say “come back” to exit and receive a confirmation. When a turn runs in the background, the agent reports the available IDs and returns control to you. Antigravity's completion notification delivers the outcome. In a direct conversation the agent relays your message and Codex's reply in their original languages. Ask explicitly for a translation or summary. For a delegated task, the agent can supply relevant context separately from your instructions. When switching clients, use the same Windows user, Codex home (`CODEX_HOME` if set), and original project directory or worktree.
+For ongoing chat, say “I want to talk to Codex.” You can send another message before Codex replies. The agent forwards it to the running turn with `steer`. If the turn ID is still unavailable, the agent tells you the message is pending and keeps it for delivery. Once the turn finishes, follow-ups use `resume` on the same thread. Say “come back” to exit direct chat and cancel unsent messages.
+
+The agent reports the available IDs when a task starts in the background and relays the result on Antigravity's completion notification. Direct chat preserves the language of each message and reply. Ask explicitly for a translation or summary. For a delegated task, the agent can supply relevant context separately from your instructions. When switching clients, use the same Windows user, Codex home (`CODEX_HOME` if set), and original project directory or worktree.
 
 ## Reuse workspace permissions
 
@@ -67,15 +69,15 @@ Run these commands from your clone in PowerShell.
 
 ## Troubleshoot a session
 
-- **The skill is missing.** Run `python manage.py check` from the clone. If files or the SDK environment are missing, run `python manage.py install` and open a new Antigravity conversation.
-- **A history page is empty.** The runner collects up to 20 matches by default, scanning at most five SDK pages or 100 candidates per invocation. If it returns a cursor, continue from there. Use `--limit` for a different target (1–50).
-- **Codex reports that the thread is already running.** Ask the Antigravity agent to read the original task's progress. To change its direction, send the instruction to that active turn with `steer`.
+- **The skill or its Python environment is missing.** Follow [Install the skill](#install-the-skill) to obtain the repository and run `python manage.py install` in the directory containing `manage.py`. The installed interpreter is `%USERPROFILE%\.gemini\config\skills\codex-delegate\scripts\.venv\Scripts\python.exe`. Run `python manage.py check` from the same directory and look for `Installation verified.`.
+- **The latest session is missing.** Use `--action list --workspace '.' --limit 1` and take the first match. Filtered searches scan 20 candidates per page, up to 100 per call. The last page can contain extra matches. If the result is empty and has a `nextCursor`, keep the filters and pass that cursor to continue.
+- **Codex reports that the thread is already running.** The follow-up is still pending. The agent can read the original task's IDs and deliver it with `steer`.
 - **A steering request finds no active turn.** Check the original task's status. If it finished, use `resume`. If it's still running, switch to the canonical directory printed as `[codex] Working directory:` and use the thread and turn IDs from the same log. A subdirectory identifies a different pipe.
 
 - **Codex needs sign-in.** Run `codex login status` and, if signed out, `codex login` under the same Windows account. For an API provider, check its credentials. `manage.py check` verifies local history access.
 - **Git is missing.** Install Git for Windows and confirm `git --version` works, or use `--non-git` to start without the repository check.
 - **The provider rejects a model or effort.** Check the reported model and effort. When you change the model, specify an effort it supports to override the inherited value.
 
-Each launcher call now uses a single command with `--cwd` and `--message` or `--message-file`. If Antigravity offers “always allow,” select a prefix scoped to the installed interpreter **and** this specific runner. The host's policy determines whether additional approvals appear. Codex itself runs with `approvalPolicy: never`, including in `workspace-write` mode. If an operation needs elevated permissions, the agent reports the blocked operation.
+At the first launcher approval, the agent explains what “Always allow” covers. A standing approval for the installed interpreter **and** this runner can allow future messages and `workspace-write` calls without another prompt. You can choose a one-time approval instead. Codex uses `approvalPolicy: never` inside the turn and reports operations that need elevated permissions.
 
 For exact PowerShell calls, UTF-8 file input, history pagination, and JSON output fields, see the [skill instructions](skills/codex-delegate/SKILL.md). For the optional native Antigravity subagent window, see the [agent definition](agents/codex.md).
