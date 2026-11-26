@@ -19,14 +19,12 @@ class InstallTest(unittest.TestCase):
             installed = (config / skill).read_text(encoding="utf-8")
             scripts = config / manage.SCRIPTS
             subprocess.run([sys.executable, "-m", "venv", "--without-pip", scripts / ".venv"], check=True)
-            (scripts / "codex.py").write_text(
-                "import json, sys\nprint(json.dumps(sys.argv[1:]))\n", encoding="utf-8")
-
-            sample = next(line for line in installed.splitlines() if " --action new --name " in line)
-            prefix = sample.split(" --cwd ", 1)[0]
-            result = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", prefix + " --message=-v"],
-                cwd=temp, capture_output=True, text=True, check=True)
-            self.assertEqual(json.loads(result.stdout), ["--message=-v"])
-            manager = str(manage.ROOT / "manage.py").replace("'", "''")
-            self.assertIn(f"python '{manager}' install", installed)
+            for launcher in ("codex_ro.py", "codex_rw.py"):
+                (scripts / launcher).write_text(
+                    "import json, sys\nprint(json.dumps(sys.argv))\n", encoding="utf-8")
+                sample = next(line for line in installed.splitlines() if f"{launcher}'" in line)
+                prefix = sample.split("`")[1]
+                result = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", prefix + " --message=-v"],
+                    cwd=temp, capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(result.stdout), [str(scripts / launcher), "--message=-v"])

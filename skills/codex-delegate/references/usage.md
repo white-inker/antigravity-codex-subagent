@@ -1,0 +1,56 @@
+# Launcher examples and troubleshooting
+
+## Run a turn or query history
+
+```powershell
+__CODEX_RO__ --cwd 'C:\path\to\project' --action new --message 'Why does the login test fail?'
+__CODEX_RW__ --cwd 'C:\path\to\project' --action new --message 'Fix the login test.'
+__CODEX_RO__ --cwd 'C:\path\to\project' --action list --limit 1
+```
+
+Use the first result for the latest session. Use its `mode` to select the launcher. If the result is empty and has a `nextCursor`, pass it with `--cursor` and the same filters. `--all` includes general Codex history. Older rows without source or mode metadata may require additional lookups.
+
+Use the same launcher as the active turn to steer or stop it. Replace the read-only prefix below with the write prefix for a writable turn.
+
+```powershell
+__CODEX_RO__ --cwd 'C:\path\to\project' --action steer --thread '<threadId>' --turn '<turnId>' --message 'Also check expired tokens.'
+__CODEX_RO__ --cwd 'C:\path\to\project' --action interrupt --thread '<threadId>' --turn '<turnId>'
+__CODEX_RO__ --cwd 'C:\path\to\project' --action resume --thread '<threadId>' --message 'Continue.'
+```
+
+`accepted` means the steer reached the turn. `interruptRequested` confirms receipt of the request. Read final stdout JSON from the original task. After a timeout or uncertain delivery, check the original task before retrying.
+
+New sessions use the launcher's mode. Resume uses the recorded mode. To explicitly change it or continue a legacy thread missing its record, use the matching launcher with `--mode read-only` or `--mode workspace-write`. If the first turn failed to start, keep its logged thread ID and retry once the cause is resolved. An unnamed thread gets the recovery name `Retry <threadId>` in that case.
+
+When switching models, the runner omits the old thread's effort unless you pass one. Use `--effort default` to use the configured default even when keeping the same model.
+
+## Preserve literal input
+
+Double apostrophes inside a single-quoted PowerShell argument. Use `--message=-v` for a message that looks like an option. For multiline, private or shell-sensitive input, use the host file tool to write the scratch message. In a PowerShell-only client, substitute the actual conversation scratch directory before preparing the file.
+
+```powershell
+$scratch = '<appDataDir>\brain\<conversation-id>\scratch'
+[IO.Directory]::CreateDirectory($scratch) | Out-Null
+$p = Join-Path $scratch ('codex-message-' + [guid]::NewGuid().ToString('N') + '.txt')
+[IO.File]::WriteAllText($p, 'First line
+''@
+Keep $name exactly as written.', [Text.UTF8Encoding]::new($false))
+$p
+```
+
+```powershell
+__CODEX_RO__ --cwd 'C:\path\to\project' --action new --consume-message-file '<absolute scratch file>'
+```
+
+If Antigravity denies the launch, remove the file you prepared because the runner never opened it. Codex's own conversation history can retain the delivered message.
+
+## Interpret results
+
+`finalResponse` joins the final answer items in order. A completed turn can have an empty answer. `changedFiles` includes confirmed SDK patches and, when `changeTracking` reads `sdk-patches-and-git-worktree`, changes observed in tracked and non-ignored files by comparing worktree metadata before and after the turn. This can include concurrent edits. Ignored files, submodule contents, temporary edits that are reverted, and edits that preserve file metadata can be missed. `sdk-patches` means only confirmed SDK patches were available. Report usage when asked.
+
+## Recover an installation
+
+- **Old approval.** Remove any standing approval for the retired `codex.py` prefix. Approve the new read and write prefixes separately. A standing write approval also covers future writable turns and their controls. Use the exact interpreter and script paths. Codex uses `approvalPolicy: never` inside its selected sandbox, so report operations the inner sandbox blocks.
+- **Launcher missing.** Obtain the [project repository](https://github.com/white-inker/antigravity-codex-subagent) and run `python manage.py install` from the directory containing `manage.py`. Then run `python manage.py check`. A working install prints `Installation verified.` Open a new Antigravity conversation.
+- **Cannot reach an active turn.** Read its original task log for canonical working directory, IDs and launcher mode. Use the same Windows account and `CODEX_HOME`. New launchers control turns started by this version.
+- **Sign-in or SDK error.** Run `codex login status` under the same Windows user and sign in if needed. For an API provider, check its credentials. If Git is unavailable, install Git for Windows or use `--non-git` for a new turn that can skip its repository check.

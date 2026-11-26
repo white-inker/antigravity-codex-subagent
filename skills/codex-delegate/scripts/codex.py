@@ -2,9 +2,10 @@
 import argparse
 import json
 import os
-import shutil
+import re
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,39 +16,48 @@ from openai_codex.client import CodexClient
 from openai_codex.generated.v2_all import ReasoningEffort
 
 from steering import control_turn, identifier, own_thread, steering_endpoint
+from workspace import git_executable, workspace_changes, workspace_snapshot
 
 SOURCE = "antigravity"
 TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
                 "output_tokens", "reasoning_output_tokens")
 
 
-def arguments():
+def arguments(launcher_mode):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--action", choices=("new", "resume", "steer", "interrupt", "list"))
     parser.add_argument("--thread", help="Codex thread ID")
     parser.add_argument("--turn", help="Expected active turn ID for steer or interrupt")
     parser.add_argument("--cwd", type=Path, help="Run in this project or the recorded worktree")
-    parser.add_argument("--workspace", type=Path)
+    parser.add_argument("--workspace", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--name")
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument("--message", help="Message to send directly")
     inputs.add_argument("--message-file", type=Path, help="Read the exact message from a UTF-8 file")
+    inputs.add_argument("--consume-message-file", type=Path, help="Read and delete a generated scratch message")
     parser.add_argument("--mode", choices=("read-only", "workspace-write"))
     parser.add_argument("--model")
-    parser.add_argument("--effort", choices=[e.value for e in ReasoningEffort])
+    parser.add_argument("--effort", choices=["default", *(e.value for e in ReasoningEffort)],
+                        help="Use the selected model's configured default or set an explicit effort")
     parser.add_argument("--non-git", action="store_true")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--cursor")
     parser.add_argument("--limit", type=int, metavar="1..50",
                         help="Target matches; delegated history includes all matches on the last page")
     args = parser.parse_args()
+    args.launcher_mode = launcher_mode
     if args.model is not None:
         args.model = args.model.strip()
         if not args.model:
             parser.error("--model requires a Codex model ID")
     args.action = args.action or ("resume" if args.thread else "new")
-    if args.action in ("list", "interrupt") and (args.message_file is not None or args.message is not None):
-        parser.error("--message and --message-file are for new, resume, or steer")
+    if args.action in ("list", "interrupt") and any(
+            value is not None for value in (args.message, args.message_file, args.consume_message_file)):
+        parser.error("message options are for new, resume, or steer")
+    if args.mode and args.mode != launcher_mode:
+        parser.error(f"{launcher_mode} launcher cannot use --mode {args.mode}")
+    if args.action == "list" and launcher_mode != "read-only":
+        parser.error("use codex_ro.py to list history")
     if args.limit is not None and (args.action != "list" or not 1 <= args.limit <= 50):
         parser.error("--limit is for list and must be between 1 and 50")
     if args.action in ("resume", "steer", "interrupt") and not args.thread:
@@ -62,6 +72,11 @@ def arguments():
 
 
 def list_sessions(client, args):
+    with ThreadPoolExecutor(max_workers=8) as lookups:
+        return scan_history(client, args, lookups)
+
+
+def scan_history(client, args, lookups):
     sessions = []
     target = args.limit or (50 if args.all else 20)
     scanned = 0
@@ -69,24 +84,37 @@ def list_sessions(client, args):
     params = {"sourceKinds": ["exec", "appServer", "cli", "vscode", "unknown"] if args.all
               else ["exec", "vscode", "appServer"], "sortKey": "updated_at",
               "modelProviders": []}
-    if args.workspace:
-        params["cwd"] = str(args.workspace.resolve(strict=True))
+    workspace = args.workspace
+    if getattr(args, "cwd", None) is not None:
+        workspace = args.cwd / workspace if workspace is not None else args.cwd
+    if workspace:
+        params["cwd"] = str(workspace.resolve(strict=True))
+
+    def legacy_source(thread_id):
+        return client.thread_read(thread_id, include_turns=False).thread.thread_source
+
     for _ in range(5):
         # The cursor points past the whole page, so return all its matches.
         page = client.thread_list(dict(params, limit=target if args.all else 20,
                                        cursor=cursor)).model_dump(mode="json", by_alias=True)
         scanned += len(page["data"])
+        modes = {row["id"]: recorded_mode(row["id"]) for row in page["data"]}
+        if not args.all:
+            legacy_ids = [row["id"] for row in page["data"] if row.get("threadSource") is None
+                          and not modes[row["id"]]]
+            legacy_sources = dict(zip(legacy_ids, lookups.map(legacy_source, legacy_ids)))
         for row in page["data"]:
             if not args.all:
                 source = row.get("threadSource")
                 if source is None:
-                    source = client.thread_read(row["id"], include_turns=False).thread.thread_source
+                    source = legacy_sources.get(row["id"], SOURCE)
                 if source != SOURCE:
                     continue
             sessions.append({
                 "threadId": row["id"], "name": row.get("name") or row["preview"][:72] or row["id"],
                 "workingDirectory": row["cwd"],
                 "updatedAt": datetime.fromtimestamp(row["updatedAt"], timezone.utc).isoformat(),
+                "mode": modes[row["id"]],
             })
         cursor = page.get("nextCursor")
         if args.all or not cursor or len(sessions) >= target:
@@ -126,7 +154,7 @@ class TurnLog:
 
 
 def collect(turn):
-    text = ""
+    answers = {}
     changed_files = {}
     log = TurnLog()
     usage = dict.fromkeys(TOKEN_FIELDS, 0)
@@ -148,7 +176,8 @@ def collect(turn):
             if item.type == "agentMessage" and event.method == "item/completed":
                 log.finish(item.id, "message", item.text)
                 if item.phase is None or item.phase.value == "final_answer":
-                    text = item.text
+                    if item.text.strip():
+                        answers[item.id] = item.text
             elif item.type == "commandExecution":
                 if event.method == "item/started":
                     log.line(f"command ({item.id}): {item.command}")
@@ -166,14 +195,13 @@ def collect(turn):
                             changed_files[change.kind.root.move_path] = None
         elif event.method == "turn/completed":
             status = payload.turn.status.value
-            result = {"status": status, "finalResponse": text, "usage": usage, "changedFiles": list(changed_files)}
+            result = {"status": status, "finalResponse": "\n\n".join(answers.values()),
+                      "usage": usage, "changedFiles": list(changed_files)}
             if status == "failed":
                 error = payload.turn.error
                 result["error"] = error.message if error else "Codex turn failed."
                 if error and error.additional_details:
                     result["error"] += f" {error.additional_details}"
-            elif status == "completed" and not text.strip():
-                result.update(status="failed", error="Codex completed without a final response.")
             return result
     raise RuntimeError("Codex disconnected before completing the turn.")
 
@@ -183,12 +211,17 @@ def mode_file(thread_id):
     return home / "antigravity-codex" / "modes" / identifier(thread_id)
 
 
-def previous_mode(thread_id):
+def recorded_mode(thread_id):
     try:
         mode = mode_file(thread_id).read_text(encoding="ascii").strip()
     except FileNotFoundError:
-        mode = None
-    if mode not in ("read-only", "workspace-write"):
+        return None
+    return mode if mode in ("read-only", "workspace-write") else None
+
+
+def previous_mode(thread_id):
+    mode = recorded_mode(thread_id)
+    if mode is None:
         raise ValueError("No saved delegation mode for this thread. Resume once with "
                          "--mode read-only or --mode workspace-write according to the current authorization.")
     return mode
@@ -229,24 +262,31 @@ def run_turn(client, args, prompt, cwd):
                 raise ValueError(f"Resume in the recorded workspace: {original}")
             mode = args.mode or previous_mode(args.thread)
             model = args.model or previous.model
-            effort = args.effort or previous.reasoning_effort
+            effort = args.effort
+            if effort is None and model == previous.model:
+                effort = previous.reasoning_effort
             params["excludeTurns"] = True
         else:
             if not args.non_git:
-                git = shutil.which("git")
+                git = git_executable()
                 if git is None:
                     raise ValueError("Git was not found on PATH. Install Git or use --non-git to skip the Git check.")
                 if subprocess.run([git, "rev-parse", "--git-dir"],
                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
                     raise ValueError("Use --non-git to start a session outside a Git repository.")
-            mode = args.mode or "read-only"
+            mode = args.launcher_mode
             model, effort = args.model, args.effort
             params["threadSource"] = SOURCE
+        if mode != args.launcher_mode:
+            launcher = "codex_rw.py" if mode == "workspace-write" else "codex_ro.py"
+            raise ValueError(f"This thread uses {mode}. Use {launcher} or explicitly select --mode {args.launcher_mode}.")
+        effort = None if effort == "default" else effort
         if model:
             params["model"] = model
         if effort:
             params["config"] = {"model_reasoning_effort": ReasoningEffort(effort).value}
         params["sandbox"] = mode
+        before = workspace_snapshot(cwd) if mode == "workspace-write" else None
         name_warning = None
         thread = None
         try:
@@ -257,7 +297,8 @@ def run_turn(client, args, prompt, cwd):
             if not args.thread:
                 locks.enter_context(own_thread(opened))
                 save_mode(opened, mode)
-            print(f"[codex] Working directory: {cwd}\n[codex] Thread ID: {opened}", file=sys.stderr, flush=True)
+            print(f"[codex] Working directory: {cwd}\n[codex] Thread ID: {opened}\n[codex] Mode: {mode}",
+                  file=sys.stderr, flush=True)
             thread = Thread(client, opened)
             if args.name and not args.thread:
                 try:
@@ -266,8 +307,8 @@ def run_turn(client, args, prompt, cwd):
                     name_warning = f"Could not save session name: {exc}"
                     print(f"[codex] {name_warning}", file=sys.stderr, flush=True)
             model = response.model
-            effort = effort or response.reasoning_effort
             turn = thread.turn(prompt, sandbox=Sandbox(mode), effort=ReasoningEffort(effort) if effort else None)
+            effort = effort or response.reasoning_effort
         except CodexError as exc:
             diagnostic = model_error(str(exc), model, effort)
             if thread is not None and not args.thread and (not args.name or name_warning):
@@ -277,11 +318,12 @@ def run_turn(client, args, prompt, cwd):
                 except CodexError as save_error:
                     diagnostic += f" Could not save thread {thread.id} for retry: {save_error}"
             raise RuntimeError(diagnostic) from exc
-        with steering_endpoint(turn):
+        with steering_endpoint(turn, mode):
             if args.thread and args.mode:
                 save_mode(opened, mode)
             print(f"[codex] Turn ID: {turn.id}", file=sys.stderr, flush=True)
             result = collect(turn)
+        result.update(workspace_changes(cwd, before, result["changedFiles"]))
         if result["status"] == "failed":
             result["error"] = model_error(result["error"], model, effort)
         if name_warning:
@@ -290,28 +332,42 @@ def run_turn(client, args, prompt, cwd):
                 "model": model, "effort": ReasoningEffort(effort).value if effort else None, **result}
 
 
-def main():
-    args = arguments()
-    if args.cwd is not None:
+def consume_message(path):
+    if (not path.is_absolute() or path.parent.name.casefold() != "scratch"
+            or path.parent.parent.parent.name.casefold() != "brain"
+            or not re.fullmatch(r"codex-message-[0-9a-f]{32}\.txt", path.name, re.IGNORECASE)):
+        raise ValueError("--consume-message-file requires an absolute brain/<conversation>/scratch/codex-message-<32 hex digits>.txt path")
+    if path.resolve(strict=True) != path.parent.resolve(strict=True) / path.name:
+        raise ValueError("The scratch message must be a regular file in the conversation scratch directory.")
+    # Windows deletes this handle's file on close, including when the process exits.
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_BINARY | os.O_TEMPORARY), "rb") as message:
+        return message.read().decode("utf-8-sig")
+
+
+def main(launcher_mode):
+    args = arguments(launcher_mode)
+    prompt = consume_message(args.consume_message_file) if args.consume_message_file is not None else None
+    if args.cwd is not None and args.action != "list":
         os.chdir(args.cwd)
     cwd = Path.cwd().resolve(strict=True)
     if args.action != "list":
         if args.workspace and args.workspace.resolve(strict=True) != cwd:
             raise ValueError(f"Run this command in {args.workspace}")
         if args.action == "interrupt":
-            return control_turn(args.thread, args.turn, "interrupt")
-        if args.message_file is not None:
-            prompt = args.message_file.read_bytes().decode("utf-8-sig")
-        elif args.message is not None:
-            prompt = args.message
-        else:
-            if sys.stdin.isatty():
-                raise ValueError("Pass a message with --message, --message-file, or UTF-8 stdin.")
-            prompt = sys.stdin.buffer.read().decode("utf-8-sig")
+            return control_turn(args.thread, args.turn, args.launcher_mode, "interrupt")
+        if prompt is None:
+            if args.message_file is not None:
+                prompt = args.message_file.read_bytes().decode("utf-8-sig")
+            elif args.message is not None:
+                prompt = args.message
+            else:
+                if sys.stdin.isatty():
+                    raise ValueError("Pass a message with --message, a message file, or UTF-8 stdin.")
+                prompt = sys.stdin.buffer.read().decode("utf-8-sig")
         if not prompt.strip():
             raise ValueError("The message is empty.")
         if args.action == "steer":
-            return control_turn(args.thread, args.turn, "steer", prompt)
+            return control_turn(args.thread, args.turn, args.launcher_mode, "steer", prompt)
     with CodexClient(CodexConfig(cwd=str(cwd))) as client:
         client.initialize()
         if args.action == "list":
@@ -319,11 +375,11 @@ def main():
         return run_turn(client, args, prompt, cwd)
 
 
-if __name__ == "__main__":
+def cli(launcher_mode):
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
-        result = main()
+        result = main(launcher_mode)
         if result.get("status") == "failed":
             print(f"Codex delegation failed: {result['error']}", file=sys.stderr, flush=True)
         print(json.dumps(result, ensure_ascii=False), flush=True)
@@ -333,3 +389,7 @@ if __name__ == "__main__":
             sys.exit(130)
     except (CodexError, OSError, RuntimeError, ValueError) as error:
         sys.exit(f"Codex delegation failed: {error}")
+
+
+if __name__ == "__main__":
+    sys.exit("Use codex_ro.py or codex_rw.py. The old shared launcher has been retired.")

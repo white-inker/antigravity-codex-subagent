@@ -10,7 +10,8 @@ import unittest
 from contextlib import ExitStack
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-RUNNER = Path(__file__).resolve().parents[1] / "skills/codex-delegate/scripts/codex.py"
+RUNNER = Path(__file__).resolve().parents[1] / "skills/codex-delegate/scripts/codex_ro.py"
+WRITER = RUNNER.with_name("codex_rw.py")
 ANSWER = "检查完成"
 PROGRESS = "正在检查超时路径"
 
@@ -86,7 +87,7 @@ class SteeringTest(unittest.TestCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.shutdown)
         (home / "config.toml").write_text(
-            'model = "gpt-5.4"\nmodel_provider = "test"\n[model_providers.test]\n'
+            'model = "gpt-5.4"\nmodel_reasoning_effort = "low"\nmodel_provider = "test"\n[model_providers.test]\n'
             f'name = "test"\nbase_url = "http://127.0.0.1:{server.server_port}/v1"\n'
             'wire_api = "responses"\nsupports_websockets = false\n', encoding="utf8")
         env = dict(os.environ, CODEX_HOME=str(home), HTTP_PROXY="http://127.0.0.1:1",
@@ -94,8 +95,8 @@ class SteeringTest(unittest.TestCase):
         for key in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"):
             env.pop(key, None)
 
-        def call(*args, message="", cwd=project, error=None):
-            p = subprocess.run([sys.executable, str(RUNNER), *args], input=message,
+        def call(*args, message="", cwd=project, error=None, launcher=RUNNER):
+            p = subprocess.run([sys.executable, str(launcher), *args], input=message,
                                cwd=cwd, env=env, capture_output=True, encoding="utf-8", timeout=30)
             if error is not None:
                 self.assertNotEqual(p.returncode, 0)
@@ -109,8 +110,8 @@ class SteeringTest(unittest.TestCase):
 
     def test_steer_while_provider_is_busy(self):
         call, env, root, project, server = self.call, self.env, self.root, self.project, self.server
-        cmd = [sys.executable, str(RUNNER), "--action", "new", "--non-git", "--name", "first",
-               "--cwd", str(project), "--mode", "workspace-write", "--model", "gpt-6.2-astra", "--effort", "high"]
+        cmd = [sys.executable, str(WRITER), "--action", "new", "--non-git", "--name", "first",
+               "--cwd", str(project), "--model", "gpt-5.4", "--effort", "high"]
         with subprocess.Popen(cmd, cwd=root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, encoding="utf8") as owner:
             owner.stdin.write("Investigate the original problem.")
@@ -128,20 +129,24 @@ class SteeringTest(unittest.TestCase):
                 self.assertIn(PROGRESS, line)
                 self.assertFalse(server.delivery_timed_out, "Progress arrived only after the item completed")
                 thread_id, turn_id = ids["Thread ID"], ids["Turn ID"]
-                active = call("--action", "list", "--cwd", str(project), "--workspace", ".", cwd=root)
+                active = call("--action", "list", "--cwd", str(project), cwd=root)
                 self.assertIn((thread_id, "first"), [(s["threadId"], s["name"]) for s in active["sessions"]])
                 route = ["--action", "steer", "--thread", thread_id, "--turn"]
-                call(*route, "stale", message="wrong turn", error="No active turn")
+                call(*route, "stale", message="wrong turn", error="No active turn", launcher=WRITER)
                 subdirectory = project / "subdirectory"
                 subdirectory.mkdir()
-                call(*route, turn_id, cwd=subdirectory, message="wrong workspace", error="No active turn")
-                call("--action", "resume", "--thread", thread_id, message="overlap", error="already has a delegated")
+                call(*route, turn_id, cwd=subdirectory, message="wrong workspace", error="No active turn", launcher=WRITER)
+                call(*route, turn_id, message="read-only launcher", error="No active turn")
+                call("--action", "resume", "--thread", thread_id, message="overlap",
+                     error="already has a delegated", launcher=WRITER)
                 message = "请检查这段原文：\r\n'@\r\nKeep $name unchanged."
                 scratch = root / "brain" / "conversation" / "scratch"
                 scratch.mkdir(parents=True)
-                message_file = scratch / "literal message.txt"
+                message_file = scratch / f"codex-message-{'a' * 32}.txt"
                 message_file.write_bytes(message.encode("utf-8"))
-                receipt = call(*route, turn_id, "--message-file", str(message_file), cwd=subdirectory / "..")
+                receipt = call(*route, turn_id, "--consume-message-file", str(message_file),
+                               cwd=subdirectory / "..", launcher=WRITER)
+                self.assertFalse(message_file.exists())
                 self.assertEqual(receipt, {"status": "accepted", "threadId": thread_id, "turnId": turn_id})
                 self.assertIsNone(owner.poll())
             finally:
@@ -158,8 +163,10 @@ class SteeringTest(unittest.TestCase):
         call(*route, turn_id, message="too late", error="No active turn")
         self.assertIn(thread_id, [s["threadId"] for s in call("--action", "list")["sessions"]])
         self.assertEqual(result["changedFiles"], [])
+        call("--action", "resume", "--thread", thread_id, message="try read launcher", error="uses workspace-write")
+        call("--action", "new", "--mode", "workspace-write", message="bad mode", error="cannot use --mode")
         next_turn = call("--action", "resume", "--thread", thread_id, "--cwd", str(project),
-                         "--message=--help", cwd=root)
+                         "--message=--help", cwd=root, launcher=WRITER)
         user_items = [item for item in server.requests[-1]["input"] if item.get("role") == "user"]
         self.assertEqual(user_items[-1]["content"][-1]["text"], "--help")
         self.assertEqual(next_turn["threadId"], thread_id)
@@ -167,6 +174,16 @@ class SteeringTest(unittest.TestCase):
         self.assertEqual(next_turn["usage"]["input_tokens"], 10)
         self.assertEqual(server.requests[-1]["reasoning"]["effort"], "high")
         self.assertEqual(next_turn["mode"], "workspace-write")
+        reset = call("--action", "resume", "--thread", thread_id, "--effort", "default",
+                     "--message", "Use configured effort", launcher=WRITER)
+        self.assertEqual(reset["effort"], "low")
+        self.assertEqual(server.requests[-1]["reasoning"]["effort"], "low")
+        call("--action", "resume", "--thread", thread_id, "--model", "gpt-5.3-codex",
+             "--effort", "high", "--message", "Set explicit effort", launcher=WRITER)
+        switched = call("--action", "resume", "--thread", thread_id, "--model", "gpt-5.4",
+                        "--message", "Switch back with default effort", launcher=WRITER)
+        self.assertEqual(switched["effort"], "low")
+        self.assertEqual(server.requests[-1]["reasoning"]["effort"], "low")
         downgraded = call("--action", "resume", "--thread", thread_id, "--mode", "read-only", "--message", "Inspect")
         self.assertEqual(downgraded["mode"], "read-only")
         self.assertEqual(call("--action", "resume", "--thread", thread_id, "--message", "Inspect again")["mode"], "read-only")
@@ -180,7 +197,8 @@ class SteeringTest(unittest.TestCase):
         record, = (root / "home" / "antigravity-codex" / "modes").iterdir()
         record.unlink()
         call("--action", "resume", "--thread", thread_id, message="Legacy", error="No saved delegation mode")
-        restored = call("--action", "resume", "--thread", thread_id, "--mode", "workspace-write", message="Legacy")
+        restored = call("--action", "resume", "--thread", thread_id, "--mode", "workspace-write",
+                        message="Legacy", launcher=WRITER)
         self.assertEqual(restored["mode"], "workspace-write")
 
     def test_resume_inherits_mode_after_first_turn_fails_to_start(self):
@@ -189,21 +207,22 @@ import runpy
 from unittest.mock import patch
 from openai_codex import CodexError, Thread
 with patch.object(Thread, "turn", side_effect=CodexError("not logged in")):
-    runpy.run_path("codex.py", run_name="__main__")
+    import sys
+    runpy.run_path(sys.argv.pop(1), run_name="__main__")
 """
         self.server.release.set()
-        for options, mode in [(["--name", "retry-start", "--mode", "workspace-write"], "workspace-write"),
-                              ([], "read-only")]:
+        for launcher, options, mode in [(WRITER, ["--name", "retry-start"], "workspace-write"),
+                                        (RUNNER, [], "read-only")]:
             with self.subTest(options=options):
                 first = subprocess.run(
-                    [sys.executable, "-c", fail_start, "--action", "new", "--cwd", str(self.project),
+                    [sys.executable, "-c", fail_start, str(launcher), "--action", "new", "--cwd", str(self.project),
                      "--non-git", *options, "--message", "Start work"],
                     cwd=RUNNER.parent, env=self.env, capture_output=True, encoding="utf-8", timeout=30)
                 self.assertEqual(first.returncode, 1, first.stderr)
                 self.assertIn("not logged in", first.stderr)
                 thread_id, = [line.removeprefix("[codex] Thread ID: ") for line in first.stderr.splitlines()
                               if line.startswith("[codex] Thread ID: ")]
-                retry = self.call("--action", "resume", "--thread", thread_id, "--message", "Retry")
+                retry = self.call("--action", "resume", "--thread", thread_id, "--message", "Retry", launcher=launcher)
                 self.assertEqual((retry["threadId"], retry["mode"], retry["status"]), (thread_id, mode, "completed"))
 
     def test_failed_model_request_keeps_thread_name_and_diagnostics(self):

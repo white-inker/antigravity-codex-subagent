@@ -3,7 +3,6 @@ import argparse
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
@@ -16,7 +15,11 @@ FILES = (
     SCRIPTS / "requirements.txt",
     SCRIPTS / "steering.py",
     SCRIPTS / "codex.py",
+    SCRIPTS / "codex_ro.py",
+    SCRIPTS / "codex_rw.py",
+    SCRIPTS / "workspace.py",
     SKILL / "SKILL.md",
+    SKILL / "references" / "usage.md",
     Path("agents/codex.md"),
 )
 
@@ -25,14 +28,12 @@ def deploy(relative, config):
     destination = config / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     data = (ROOT / relative).read_bytes()
-    if relative == SKILL / "SKILL.md":
+    if relative in (SKILL / "SKILL.md", SKILL / "references" / "usage.md"):
         scripts = (config / SCRIPTS).resolve()
-        exe = str(scripts / ".venv" / "Scripts" / "python.exe")
-        command = exe if re.fullmatch(r"[A-Za-z]:[\\\w.\-]+", exe, re.ASCII) else "& '" + exe.replace("'", "''") + "'"
-        runner = str(scripts / "codex.py").replace("'", "''")
-        data = data.replace(b"__CODEX_LAUNCHER__", f"{command} '{runner}'".encode("utf-8"))
-        manager = str(ROOT / "manage.py").replace("'", "''")
-        data = data.replace(b"__CODEX_MANAGER__", f"python '{manager}'".encode("utf-8"))
+        exe = str(scripts / ".venv" / "Scripts" / "python.exe").replace("'", "''")
+        for suffix in ("ro", "rw"):
+            runner = str(scripts / f"codex_{suffix}.py").replace("'", "''")
+            data = data.replace(f"__CODEX_{suffix.upper()}__".encode(), f"& '{exe}' '{runner}'".encode("utf-8"))
     if destination.is_file() and destination.read_bytes() == data:
         return
     # Publish a complete file even if another Antigravity window is reading it.
@@ -51,7 +52,7 @@ def check(config, python):
         if not (config / relative).is_file():
             raise SystemExit(f"Missing {config / relative}. Run: python manage.py install")
     result = subprocess.run(
-        [python, config / SCRIPTS / "codex.py", "--action", "list", "--workspace", ROOT],
+        [python, config / SCRIPTS / "codex_ro.py", "--action", "list", "--cwd", ROOT],
         cwd=ROOT, stdout=subprocess.PIPE, encoding="utf-8", check=True,
     )
     if not isinstance(json.loads(result.stdout)["sessions"], list):

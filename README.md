@@ -25,7 +25,7 @@ Ask the Antigravity agent in the CLI or IDE to work with Codex on a local Window
    python manage.py install
    ```
 
-   The installer creates a private Python environment, installs the pinned SDK, and writes the fixed launcher prefix for your profile into the installed skill. It installs the skill and agent files into `%USERPROFILE%\.gemini\config`. It prints `Installation verified.` after the runner successfully queries local session history.
+   The installer creates a private Python environment, installs the pinned SDK, and fills in the read-only and write launcher paths. It installs the skill and agent files into `%USERPROFILE%\.gemini\config`. It prints `Installation verified.` after the read-only runner successfully queries local session history.
 
 3. Open a new Antigravity conversation in this repository to load the skill.
 
@@ -47,7 +47,7 @@ Codex should identify `tests/test_steering.py`. Once it replies, ask “What doe
 | The turn has finished | “Continue test-guide and explain how it handles an expired turn ID.” | `resume` starts the next turn in the same Codex thread. |
 | You reopened Antigravity or switched between CLI and IDE | “List my Codex sessions, then continue test-guide.” | The agent looks up the saved thread and its working directory. |
 
-For ongoing chat, say “I want to talk to Codex.” You can send another message before Codex replies. The agent forwards it to the running turn with `steer`. If the turn ID is still unavailable, the agent tells you the message is pending and keeps it for delivery. Once the turn finishes, follow-ups use `resume` on the same thread. Say “come back” to exit direct chat and cancel unsent messages.
+For ongoing chat, say “I want to talk to Codex.” Once the turn ID is available, the agent forwards new messages to the running turn with `steer`. During startup, the agent tells you if it needs you to resend a message later. After completion, follow-ups use `resume` on the same thread. Enter `/codex-exit` to return to Antigravity.
 
 The agent reports the available IDs when a task starts in the background and relays the result on Antigravity's completion notification. Direct chat preserves the language of each message and reply. Ask explicitly for a translation or summary. For a delegated task, the agent can supply relevant context separately from your instructions. When switching clients, use the same Windows user, Codex home (`CODEX_HOME` if set), and original project directory or worktree.
 
@@ -55,7 +55,7 @@ The agent reports the available IDs when a task starts in the background and rel
 
 New sessions default to read-only. Authorize edits for a task to start it in workspace-write mode. The runner saves this choice when it creates the thread. If the first turn fails to start, fix the cause and retry with the thread ID from the original task. `resume` inherits the saved mode. An explicit mode change becomes the new default for that thread once the resumed turn starts. Older threads without a recorded mode require an explicit choice once. Steering keeps the active turn's settings.
 
-The final result includes a deduplicated `changedFiles` list from completed Codex patch events. Renames include the old and new paths. Inspect the workspace separately for changes made by shell commands or partial failures. An interrupt requests a graceful stop and leaves already-applied changes in place.
+The final result includes confirmed SDK patches in `changedFiles`. Writable Git turns also include observed file additions, edits and removals, including shell changes to tracked and non-ignored files. The `changeTracking` field identifies coverage. An interrupt requests a graceful stop and leaves already-applied changes in place.
 
 ## Maintain the installation
 
@@ -70,14 +70,14 @@ Run these commands from your clone in PowerShell.
 ## Troubleshoot a session
 
 - **The skill or its Python environment is missing.** Follow [Install the skill](#install-the-skill) to obtain the repository and run `python manage.py install` in the directory containing `manage.py`. The installed interpreter is `%USERPROFILE%\.gemini\config\skills\codex-delegate\scripts\.venv\Scripts\python.exe`. Run `python manage.py check` from the same directory and look for `Installation verified.`.
-- **The latest session is missing.** Use `--action list --workspace '.' --limit 1` and take the first match. Filtered searches scan 20 candidates per page, up to 100 per call. The last page can contain extra matches. If the result is empty and has a `nextCursor`, keep the filters and pass that cursor to continue.
+- **The latest session is missing.** Use `--action list --cwd '<project>' --limit 1` and take the first match. If the result is empty and has a `nextCursor`, keep the filters and pass that cursor to continue.
 - **Codex reports that the thread is already running.** The follow-up is still pending. The agent can read the original task's IDs and deliver it with `steer`.
 - **A steering request finds no active turn.** Check the original task's status. If it finished, use `resume`. If it's still running, switch to the canonical directory printed as `[codex] Working directory:` and use the thread and turn IDs from the same log. A subdirectory identifies a different pipe.
 
 - **Codex needs sign-in.** Run `codex login status` and, if signed out, `codex login` under the same Windows account. For an API provider, check its credentials. `manage.py check` verifies local history access.
 - **Git is missing.** Install Git for Windows and confirm `git --version` works, or use `--non-git` to start without the repository check.
-- **The provider rejects a model or effort.** Check the reported model and effort. When you change the model, specify an effort it supports to override the inherited value.
+- **The provider rejects a model or effort.** Check the reported values. Changing models uses the configured default unless you set an effort. Use `--effort default` to reset effort for the current model.
 
-Before its first launcher call in a conversation, the agent explains what “Always allow” covers. It skips the notice if it already knows a previous call to the same launcher ran without a prompt. A standing approval for the installed interpreter **and** this runner can allow future messages and `workspace-write` calls without another prompt. You can choose a one-time approval instead. Codex uses `approvalPolicy: never` inside the turn and reports operations that need elevated permissions.
+The read-only and write launchers have separate approval prefixes that each include the interpreter and script path. Use one-time approval for writable calls to review them individually. When upgrading, remove standing approvals for the retired `codex.py` launcher. Live control pipes are limited to the Windows account that owns the turn.
 
-For exact PowerShell calls, UTF-8 file input, history pagination, and JSON output fields, see the [skill instructions](skills/codex-delegate/SKILL.md). For the optional native Antigravity subagent window, see the [agent definition](agents/codex.md).
+For PowerShell calls, UTF-8 file input, and JSON output fields, see the [launcher reference](skills/codex-delegate/references/usage.md). The [agent definition](agents/codex.md) describes the optional native subagent window.

@@ -53,7 +53,7 @@ class HistoryTest(unittest.TestCase):
     def test_scan_cap_preserves_cursor(self):
         client = Mock()
         client.thread_list.return_value.model_dump.side_effect = [
-            {"data": [{"threadSource": "user"} for _ in range(20)], "nextCursor": str(i)}
+            {"data": [{"id": f"{i}-{j}", "threadSource": "user"} for j in range(20)], "nextCursor": str(i)}
             for i in range(1, 6)
         ]
         result = list_sessions(client, SimpleNamespace(all=False, cursor=None, workspace=None, limit=None))
@@ -64,7 +64,7 @@ class HistoryTest(unittest.TestCase):
         client = Mock()
         row = {"threadSource": "antigravity", "name": "test", "cwd": "test", "updatedAt": 0}
         client.thread_list.return_value.model_dump.side_effect = [
-            {"data": [dict(row, id="a"), {"threadSource": "user"}], "nextCursor": "page2"},
+            {"data": [dict(row, id="a"), {"id": "unrelated", "threadSource": "user"}], "nextCursor": "page2"},
             {"data": [dict(row, id="b")], "nextCursor": "page3"},
         ]
         result = list_sessions(client, SimpleNamespace(all=False, cursor=None, workspace=None, limit=2))
