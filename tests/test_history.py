@@ -10,7 +10,7 @@ from codex import list_sessions
 
 
 class HistoryTest(unittest.TestCase):
-    def test_empty_filtered_page_can_be_continued(self):
+    def test_empty_filtered_page_is_scanned_in_the_same_call(self):
         client = Mock()
         page = client.thread_list.return_value.model_dump
         page.side_effect = [
@@ -20,19 +20,36 @@ class HistoryTest(unittest.TestCase):
              "nextCursor": None},
         ]
         client.thread_read.return_value.thread.thread_source = "user"
-        args = SimpleNamespace(all=False, cursor=None, workspace=None)
+        args = SimpleNamespace(all=False, cursor=None, workspace=None, limit=None)
         result = list_sessions(client, args)
-        self.assertEqual(result, {"sessions": [], "nextCursor": "next"})
-        self.assertEqual(client.thread_list.call_count, 1)
-        self.assertEqual(client.thread_list.call_args.args[0]["limit"], 20)
-        self.assertEqual(client.thread_read.call_count, 20)
-
-        args.cursor = result["nextCursor"]
-        result = list_sessions(client, args)
+        self.assertEqual(client.thread_list.call_count, 2)
+        self.assertEqual(result["scanned"], 22)
         self.assertEqual([s["threadId"] for s in result["sessions"]], ["a"])
         self.assertIsNone(result["nextCursor"])
         self.assertEqual(client.thread_list.call_args.args[0]["cursor"], "next")
         self.assertEqual(client.thread_read.call_count, 20)
+
+    def test_scan_cap_preserves_cursor(self):
+        client = Mock()
+        client.thread_list.return_value.model_dump.side_effect = [
+            {"data": [{"threadSource": "user"} for _ in range(20)], "nextCursor": str(i)}
+            for i in range(1, 6)
+        ]
+        result = list_sessions(client, SimpleNamespace(all=False, cursor=None, workspace=None, limit=None))
+        self.assertEqual(result, {"sessions": [], "nextCursor": "5", "scanned": 100})
+        self.assertEqual(client.thread_list.call_count, 5)
+
+    def test_remaining_limit_does_not_drop_matches(self):
+        client = Mock()
+        row = {"threadSource": "antigravity", "name": "test", "cwd": "test", "updatedAt": 0}
+        client.thread_list.return_value.model_dump.side_effect = [
+            {"data": [dict(row, id="a"), {"threadSource": "user"}], "nextCursor": "page2"},
+            {"data": [dict(row, id="b")], "nextCursor": "page3"},
+        ]
+        result = list_sessions(client, SimpleNamespace(all=False, cursor=None, workspace=None, limit=2))
+        self.assertEqual([s["threadId"] for s in result["sessions"]], ["a", "b"])
+        self.assertEqual(client.thread_list.call_args.args[0]["limit"], 1)
+        self.assertEqual(result["nextCursor"], "page3")
 
     def test_all_uses_only_the_list_response(self):
         client = Mock()
@@ -40,7 +57,7 @@ class HistoryTest(unittest.TestCase):
             "data": [{"id": "other", "name": "ordinary", "cwd": "project", "updatedAt": 0}],
             "nextCursor": "next",
         }
-        result = list_sessions(client, SimpleNamespace(all=True, cursor=None, workspace=None))
+        result = list_sessions(client, SimpleNamespace(all=True, cursor=None, workspace=None, limit=None))
         self.assertEqual(result["sessions"][0]["threadId"], "other")
         self.assertEqual(result["nextCursor"], "next")
         client.thread_read.assert_not_called()

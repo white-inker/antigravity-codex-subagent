@@ -3,6 +3,8 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 from tempfile import NamedTemporaryFile
@@ -23,6 +25,12 @@ def deploy(relative, config):
     destination = config / relative
     destination.parent.mkdir(parents=True, exist_ok=True)
     data = (ROOT / relative).read_bytes()
+    if relative == SKILL / "SKILL.md":
+        scripts = (config / SCRIPTS).resolve()
+        exe = str(scripts / ".venv" / "Scripts" / "python.exe")
+        command = exe if re.fullmatch(r"[A-Za-z]:[\\\w.\-]+", exe, re.ASCII) else "& '" + exe.replace("'", "''") + "'"
+        runner = str(scripts / "codex.py").replace("'", "''")
+        data = data.replace(b"__CODEX_LAUNCHER__", f"{command} '{runner}'".encode("utf-8"))
     if destination.is_file() and destination.read_bytes() == data:
         return
     # Publish a complete file even if another Antigravity window is reading it.
@@ -61,6 +69,8 @@ def main():
     python = venv / "Scripts" / "python.exe"
 
     if action == "update":
+        if not shutil.which("git"):
+            parser.exit(1, "Git was not found on PATH. Install Git for Windows before running update.\n")
         subprocess.run(["git", "pull", "--ff-only"], cwd=ROOT, check=True)
         subprocess.run([sys.executable, ROOT / "manage.py", "install"], check=True)
         return

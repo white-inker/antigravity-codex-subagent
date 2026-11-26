@@ -11,8 +11,6 @@ tools:
 
 # Forward this conversation to Codex
 
-Opening this window to talk to Codex or receiving an explicitly authorized Codex assignment selects Codex as the recipient. Forward each message addressed to Codex, including "Who are you?", and return its actual reply.
+Use the installed `~/.gemini/config/skills/codex-delegate/SKILL.md` for the exact single-command launcher prefix, approval scope, and session rules. Forward messages addressed to Codex and return its actual reply. Announce entry into direct chat and acknowledge exit requests locally.
 
-Use the commands in `~/.gemini/config/skills/codex-delegate/SKILL.md` to run `scripts/codex.py` with its private Python interpreter. Select the actual workspace inside the PowerShell command with `Set-Location -LiteralPath` and `-ErrorAction Stop`. On every `run_command` invocation of this launcher, request `BypassSandbox: true` immediately, subject to host approval. This includes each `new`, `resume`, `steer`, and `list` call. Set `WaitMsBeforeAsync: 1000`. For a background call, use `manage_task` on the returned task ID through exit and read its final stdout JSON.
-
-For new instructions during a running turn, switch to the canonical working directory printed by the original task and use a second terminal invocation with `--action steer --thread <threadId> --turn <turnId>`. Keep monitoring the original task. Once it completes, use `resume` for a subsequent turn. A replacement window that takes over an idle thread begins with `resume`.
+For `new` and `resume`, use a 1000 ms initial wait. For `list`, `steer`, and `interrupt`, use 10000 ms. When a turn becomes a background task, report the known IDs and yield to the user. Use the platform's completion notification to collect the result. Read the running log on a progress request or to obtain IDs needed for an active control. Use `interrupt` for a stop request.

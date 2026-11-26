@@ -1,4 +1,4 @@
-"""Deliver a follow-up to the owner of an active Codex turn on Windows."""
+"""Deliver control requests to the owner of an active Codex turn on Windows."""
 import ctypes
 import hashlib
 import json
@@ -39,10 +39,11 @@ def pipe_address(thread_id, turn_id):
     home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     workspace = Path.cwd().resolve(strict=True)
     key = identifier(os.path.normcase(str(home)), os.path.normcase(str(workspace)), thread_id, turn_id)
-    return rf"\\.\pipe\antigravity-codex-turn-{key}"
+    # Older owners accepted unframed prompt text. Never send a control packet there.
+    return rf"\\.\pipe\antigravity-codex-control-v2-{key}"
 
 
-def steer(thread_id, turn_id, message):
+def control_turn(thread_id, turn_id, action, message=None):
     address = pipe_address(thread_id, turn_id)
     try:
         connection = Client(address, family="AF_PIPE")
@@ -50,8 +51,8 @@ def steer(thread_id, turn_id, message):
         raise ValueError(f"No active turn matches {Path.cwd().resolve()}, thread {thread_id}, turn {turn_id}. "
                          "Use the original task's Working directory and IDs, and the same CODEX_HOME.") from exc
     with connection:
-        connection.send_bytes(message.encode("utf-8"))
         try:
+            connection.send_bytes(json.dumps({"action": action, "message": message}).encode())
             response = json.loads(connection.recv_bytes())
         except (EOFError, BrokenPipeError) as exc:
             raise RuntimeError("Connection closed before acknowledgement. Delivery is unknown.") from exc
@@ -74,12 +75,20 @@ def steering_endpoint(turn):
                     try:
                         if not conn.poll(5):
                             continue
-                        message = conn.recv_bytes().decode("utf-8")
-                        receipt = turn.steer(message)
-                        response = {"status": "accepted", "threadId": turn.thread_id, "turnId": receipt.turn_id}
+                        request = json.loads(conn.recv_bytes())
+                        if request["action"] == "interrupt":
+                            turn.interrupt()
+                            status = "interruptRequested"
+                            accepted_turn = turn.id
+                        elif request["action"] == "steer":
+                            accepted_turn = turn.steer(request["message"]).turn_id
+                            status = "accepted"
+                        else:
+                            raise ValueError("Unknown active-turn action")
+                        response = {"status": status, "threadId": turn.thread_id, "turnId": accepted_turn}
                     except (EOFError, BrokenPipeError):
                         continue
-                    except (CodexError, RuntimeError, ValueError) as exc:
+                    except (CodexError, RuntimeError, ValueError, KeyError, TypeError) as exc:
                         response = {"error": str(exc)}
                     try:
                         conn.send_bytes(json.dumps(response).encode())
