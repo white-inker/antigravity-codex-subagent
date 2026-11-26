@@ -2,7 +2,7 @@
 
 [简体中文](README.zh-CN.md)
 
-Ask Gemini in Antigravity CLI or IDE to work with Codex on a local Windows project. You can read Codex's progress, give it a new instruction while it's working, and pick up the same conversation after restarting Antigravity. Gemini sends each message through the official Python Codex SDK.
+Ask the Antigravity agent in the CLI or IDE to work with Codex on a local Windows project. You can read Codex's progress, give it a new instruction while it's working, and pick up the same conversation after restarting Antigravity. The agent sends each message through the official Python Codex SDK.
 
 ## Before you start
 
@@ -31,22 +31,22 @@ Ask Gemini in Antigravity CLI or IDE to work with Codex on a local Windows proje
 
 ## Try a read-only task
 
-Ask Gemini:
+Ask the Antigravity agent:
 
 > Use Codex to inspect this repository in read-only mode. Name the session test-guide. Which file tests live steering, and how do I run it?
 
-Codex should identify `tests/test_steering.py`. Once it replies, ask “What does that test check before it sends the extra instruction?” Gemini sends the follow-up to the same thread. To authorize changes, say what Codex may edit. You can also specify a model and reasoning effort in your request.
+Codex should identify `tests/test_steering.py`. Once it replies, ask “What does that test check before it sends the extra instruction?” The agent sends the follow-up to the same thread. To authorize changes, say what Codex may edit. You can also specify a model and reasoning effort in your request.
 
 ## Monitor, steer, or resume a task
 
-| When | What to say to Gemini | What to expect |
+| When | What to say to the Antigravity agent | What to expect |
 | --- | --- | --- |
-| A task is running | “What is Codex doing? Show me the latest test output.” | Gemini reads the original background task's log. It can see public messages, commands, output, exit status, and changed file paths. |
+| A task is running | “What is Codex doing? Show me the latest test output.” | The agent reads the original background task's log. It can see public messages, commands, output, exit status, and changed file paths. |
 | You want to redirect ongoing work | “Also check what happens if the turn finishes before the message arrives.” | `steer` delivers the instruction to the active turn. An `accepted` receipt confirms delivery. The final answer comes from the original task. |
 | The turn has finished | “Continue test-guide and explain how it handles an expired turn ID.” | `resume` starts the next turn in the same Codex thread. |
-| You reopened Antigravity or switched between CLI and IDE | “List my Codex sessions, then continue test-guide.” | Gemini looks up the saved thread and its working directory. |
+| You reopened Antigravity or switched between CLI and IDE | “List my Codex sessions, then continue test-guide.” | The agent looks up the saved thread and its working directory. |
 
-For ongoing chat, say “I want to talk to Codex.” Say “Back to Gemini” to end forwarding. When switching clients, use the same Windows user, Codex home (`CODEX_HOME` if set), and original project directory or worktree.
+For ongoing chat, say “I want to talk to Codex.” Say “Back to the Antigravity agent” to end forwarding. In a direct conversation the agent relays your message and Codex's reply in their original languages. Ask explicitly for a translation or summary. For a delegated task, the agent can supply relevant context separately from your instructions. When switching clients, use the same Windows user, Codex home (`CODEX_HOME` if set), and original project directory or worktree.
 
 ## Maintain the installation
 
@@ -61,7 +61,10 @@ Run these commands from your clone in PowerShell.
 ## Troubleshoot a session
 
 - **The skill is missing.** Run `python manage.py check` from the clone. If files or the SDK environment are missing, run `python manage.py install` and open a new Antigravity conversation.
-- **Codex reports that the thread is already running.** Ask Gemini to read the original task's progress. To change its direction, send the instruction to that active turn with `steer`.
-- **A steering request finds no active turn.** Check the original task's status. If it finished, use `resume`. If it's still running, use its recorded working directory and the thread and turn IDs from its log.
+- **A history page is empty.** A delegated-session lookup checks up to 20 candidate threads per call. If `nextCursor` is present, the agent can continue searching with that cursor and the same workspace filter. General history (`--all`) skips the per-thread source checks.
+- **Codex reports that the thread is already running.** Ask the Antigravity agent to read the original task's progress. To change its direction, send the instruction to that active turn with `steer`.
+- **A steering request finds no active turn.** Check the original task's status. If it finished, use `resume`. If it's still running, switch to the canonical directory printed as `[codex] Working directory:` and use the thread and turn IDs from the same log. A subdirectory identifies a different pipe.
 
-For exact PowerShell calls, permission modes, and JSON output fields, see the [skill instructions](skills/codex-delegate/SKILL.md). For the optional native Antigravity subagent window, see the [agent definition](agents/codex.md).
+On Windows, the agent requests host execution on every launcher call. The host's policy determines whether you see an approval prompt. Codex itself runs with `approvalPolicy: never`, including in `workspace-write` mode. If an operation needs elevated permissions, the agent reports the blocked operation.
+
+For exact PowerShell calls, UTF-8 file input, history pagination, and JSON output fields, see the [skill instructions](skills/codex-delegate/SKILL.md). For the optional native Antigravity subagent window, see the [agent definition](agents/codex.md).

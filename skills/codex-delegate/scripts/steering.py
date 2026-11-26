@@ -47,7 +47,8 @@ def steer(thread_id, turn_id, message):
     try:
         connection = Client(address, family="AF_PIPE")
     except FileNotFoundError as exc:
-        raise ValueError("No active turn matches this workspace, thread ID and turn ID.") from exc
+        raise ValueError(f"No active turn matches {Path.cwd().resolve()}, thread {thread_id}, turn {turn_id}. "
+                         "Use the original task's Working directory and IDs, and the same CODEX_HOME.") from exc
     with connection:
         connection.send_bytes(message.encode("utf-8"))
         try:

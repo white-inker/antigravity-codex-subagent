@@ -116,10 +116,14 @@ class SteeringTest(unittest.TestCase):
                 thread_id, turn_id = ids["Thread ID"], ids["Turn ID"]
                 route = ["--action", "steer", "--thread", thread_id, "--turn"]
                 call(*route, "stale", message="wrong turn", error="No active turn")
-                call(*route, turn_id, cwd=root, message="wrong workspace", error="No active turn")
+                subdirectory = project / "subdirectory"
+                subdirectory.mkdir()
+                call(*route, turn_id, cwd=subdirectory, message="wrong workspace", error="No active turn")
                 call("--action", "resume", "--thread", thread_id, message="overlap", error="already has a delegated")
-                message = "Extra instruction: check the timeout first."
-                receipt = call(*route, turn_id, message=message)
+                message = "请检查这段原文：\r\n'@\r\nKeep $name unchanged."
+                message_file = root / "literal message.txt"
+                message_file.write_bytes(message.encode("utf-8"))
+                receipt = call(*route, turn_id, "--message-file", str(message_file), cwd=subdirectory / "..")
                 self.assertEqual(receipt, {"status": "accepted", "threadId": thread_id, "turnId": turn_id})
                 self.assertIsNone(owner.poll())
             finally:
@@ -129,7 +133,10 @@ class SteeringTest(unittest.TestCase):
         self.assertIn(ANSWER, output)
         result = json.loads(output)
         self.assertEqual((result["threadId"], result["turnId"], result["finalResponse"]), (thread_id, turn_id, ANSWER))
-        self.assertTrue(any(message in json.dumps(req["input"]) for req in server.requests[1:]))
+        user_text = [part.get("text") for req in server.requests[1:] for item in req["input"]
+                     if item.get("role") == "user" for part in item.get("content", [])]
+        self.assertIn(message, user_text)
+        call("--action", "new", "--effort", "persistent", message="test", error="invalid choice")
         call(*route, turn_id, message="too late", error="No active turn")
         self.assertIn(thread_id, [s["threadId"] for s in call("--action", "list")["sessions"]])
         next_turn = call("--action", "resume", "--thread", thread_id, message="Follow-up")

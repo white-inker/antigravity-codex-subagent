@@ -25,9 +25,10 @@ def arguments():
     parser.add_argument("--turn", help="Expected active turn ID (steer only)")
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--name")
+    parser.add_argument("--message-file", type=Path, help="Read the exact message from a UTF-8 file")
     parser.add_argument("--mode", choices=("read-only", "workspace-write"))
     parser.add_argument("--model")
-    parser.add_argument("--effort", choices=[e.value for e in ReasoningEffort] + ["persistent"])
+    parser.add_argument("--effort", choices=[e.value for e in ReasoningEffort])
     parser.add_argument("--non-git", action="store_true")
     parser.add_argument("--all", action="store_true")
     parser.add_argument("--cursor")
@@ -37,6 +38,8 @@ def arguments():
         if not args.model:
             parser.error("--model requires a Codex model ID")
     args.action = args.action or ("resume" if args.thread else "new")
+    if args.action == "list" and args.message_file is not None:
+        parser.error("--message-file is for new, resume, or steer")
     if args.action in ("resume", "steer") and not args.thread:
         parser.error("resume and steer require --thread")
     if args.action == "new" and args.thread:
@@ -50,27 +53,26 @@ def arguments():
 
 def list_sessions(client, args):
     sessions = []
-    cursor = args.cursor
-    while True:
-        params = {"sourceKinds": ["exec", "appServer", "cli", "vscode", "unknown"] if args.all
-                  else ["exec", "vscode", "appServer"], "sortKey": "updated_at", "limit": 50,
-                  "cursor": cursor, "modelProviders": []}
-        if args.workspace:
-            params["cwd"] = str(args.workspace.resolve(strict=True))
-        page = client.thread_list(params).model_dump(mode="json", by_alias=True)
-        for row in page["data"]:
-            if not args.all and row.get("threadSource") != SOURCE:
-                # 0.172 list summaries can omit the saved source tag.
-                if client.thread_read(row["id"]).thread.thread_source != SOURCE:
-                    continue
-            sessions.append({
-                "threadId": row["id"], "name": row.get("name") or row["preview"][:72] or row["id"],
-                "workingDirectory": row["cwd"],
-                "updatedAt": datetime.fromtimestamp(row["updatedAt"], timezone.utc).isoformat(),
-            })
-        cursor = page.get("nextCursor")
-        if not cursor or args.all or len(sessions) >= 50:
-            return {"sessions": sessions, "nextCursor": cursor}
+    params = {"sourceKinds": ["exec", "appServer", "cli", "vscode", "unknown"] if args.all
+              else ["exec", "vscode", "appServer"], "sortKey": "updated_at",
+              "limit": 50 if args.all else 20, "cursor": args.cursor, "modelProviders": []}
+    if args.workspace:
+        params["cwd"] = str(args.workspace.resolve(strict=True))
+    page = client.thread_list(params).model_dump(mode="json", by_alias=True)
+    for row in page["data"]:
+        if not args.all:
+            source = row.get("threadSource")
+            if source is None:
+                # SDK 0.172 can omit the source tag in the list response.
+                source = client.thread_read(row["id"], include_turns=False).thread.thread_source
+            if source != SOURCE:
+                continue
+        sessions.append({
+            "threadId": row["id"], "name": row.get("name") or row["preview"][:72] or row["id"],
+            "workingDirectory": row["cwd"],
+            "updatedAt": datetime.fromtimestamp(row["updatedAt"], timezone.utc).isoformat(),
+        })
+    return {"sessions": sessions, "nextCursor": page.get("nextCursor")}
 
 
 class TurnLog:
@@ -181,7 +183,8 @@ def run_turn(client, args, prompt, cwd):
         thread = Thread(client, opened)
         turn = thread.turn(prompt, effort=ReasoningEffort(effort) if effort else None)
         with steering_endpoint(turn):
-            print(f"[codex] Thread ID: {opened}\n[codex] Turn ID: {turn.id}", file=sys.stderr, flush=True)
+            print(f"[codex] Working directory: {cwd}\n[codex] Thread ID: {opened}\n[codex] Turn ID: {turn.id}",
+                  file=sys.stderr, flush=True)
             result = collect(turn)
         if args.name and not args.thread:
             try:
@@ -197,9 +200,12 @@ def main():
     if args.action != "list":
         if args.workspace and args.workspace.resolve(strict=True) != cwd:
             raise ValueError(f"Run this command in {args.workspace}")
-        if sys.stdin.isatty():
-            raise ValueError("Pass the UTF-8 message on stdin.")
-        prompt = sys.stdin.buffer.read().decode("utf-8-sig")
+        if args.message_file is not None:
+            prompt = args.message_file.read_bytes().decode("utf-8-sig")
+        else:
+            if sys.stdin.isatty():
+                raise ValueError("Pass a UTF-8 message on stdin or with --message-file.")
+            prompt = sys.stdin.buffer.read().decode("utf-8-sig")
         if not prompt.strip():
             raise ValueError("The message is empty.")
         if args.action == "steer":
