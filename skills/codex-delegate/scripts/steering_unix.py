@@ -1,5 +1,6 @@
-"""Control active Codex turns through private Unix sockets on Linux."""
+"""Control active Codex turns through private sockets on Linux and macOS."""
 from contextlib import contextmanager
+import ctypes
 import fcntl
 import json
 import os
@@ -15,7 +16,7 @@ from steering import PACKET_LIMIT, codex_home, control_address_key, dispatch_con
 
 def runtime_directory():
     # A short path leaves room for the address within the Unix socket path limit.
-    directory = Path("/tmp") / f"antigravity-codex-{os.geteuid()}"
+    directory = Path("/tmp") / f"codex-delegate-{os.geteuid()}"
     directory.mkdir(mode=0o700, exist_ok=True)
     info = directory.lstat()
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
@@ -40,9 +41,18 @@ def socket_address(thread_id, turn_id, mode):
 
 
 def verify_peer(conn):
-    credentials = struct.Struct("3i")
-    _, uid, _ = credentials.unpack(conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, credentials.size))
-    if uid != os.geteuid():
+    if sys.platform == "darwin":
+        uid, gid = ctypes.c_uint(), ctypes.c_uint()
+        getpeereid = ctypes.CDLL(None, use_errno=True).getpeereid
+        getpeereid.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint)]
+        if getpeereid(conn.fileno(), ctypes.byref(uid), ctypes.byref(gid)) != 0:
+            err = ctypes.get_errno()
+            raise OSError(err, os.strerror(err))
+        peer_uid = uid.value
+    else:
+        credentials = struct.Struct("3i")
+        _, peer_uid, _ = credentials.unpack(conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, credentials.size))
+    if peer_uid != os.geteuid():
         raise PermissionError("Control socket belongs to a different operating system user.")
 
 

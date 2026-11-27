@@ -141,7 +141,7 @@ class SteeringTest(unittest.TestCase):
                 call("--action", "resume", "--thread", thread_id, message="overlap",
                      error="already has a delegated", launcher=WRITER)
                 message = "请检查这段原文：\r\n'@\r\nKeep $name unchanged."
-                scratch = root / "profile/.gemini/antigravity-cli/brain/conversation/scratch"
+                scratch = root / "profile/.codex-delegate/scratch/conversation"
                 scratch.mkdir(parents=True)
                 message_file = scratch / f"codex-message-{'a' * 32}.txt"
                 message_file.write_bytes(message.encode("utf-8"))
@@ -203,8 +203,12 @@ class SteeringTest(unittest.TestCase):
         self.assertEqual(modes[next_turn["turnId"]], "workspace-write")
         self.assertEqual(modes[downgraded["turnId"]], "read-only")
         # A thread predating the permission record must not silently gain or lose write access.
-        record, = (root / "home" / "antigravity-codex" / "modes").iterdir()
-        record.unlink()
+        record, = (root / "home" / "codex-delegate" / "modes").iterdir()
+        legacy = root / "home" / "antigravity-codex" / "modes" / record.name
+        legacy.parent.mkdir(parents=True)
+        record.replace(legacy)
+        self.assertEqual(call("--action", "resume", "--thread", thread_id, "--message", "Old record")["mode"], "read-only")
+        legacy.unlink()
         call("--action", "resume", "--thread", thread_id, message="Legacy", error="No saved delegation mode")
         restored = call("--action", "resume", "--thread", thread_id, "--mode", "workspace-write",
                         message="Legacy", launcher=WRITER)

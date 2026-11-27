@@ -1,4 +1,4 @@
-"""Antigravity's Windows CLI for the official Codex SDK."""
+"""Host-independent launchers for the official Codex SDK."""
 import argparse
 import json
 import os
@@ -16,17 +16,19 @@ from openai_codex.client import CodexClient
 from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import ValidationError
 
+from setup_runtime import scratch_root
 from steering import identifier
 from workspace import git_executable, workspace_changes, workspace_snapshot
 
 if sys.platform == "win32":
     from steering_windows import control_turn, own_thread, steering_endpoint
-elif sys.platform == "linux":
-    from steering_linux import control_turn, own_thread, steering_endpoint
+elif sys.platform in ("linux", "darwin"):
+    from steering_unix import control_turn, own_thread, steering_endpoint
 else:
-    raise SystemExit("The Codex delegation skill supports Windows and Linux.")
+    raise SystemExit("The Codex delegation skill supports Windows, Linux, and macOS.")
 
-SOURCE = "antigravity"
+SOURCE = "codex-delegate"
+DELEGATION_SOURCES = {SOURCE, "antigravity"}
 TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",
                 "output_tokens", "reasoning_output_tokens")
 
@@ -124,7 +126,7 @@ def scan_history(client, args, lookups):
                     source = legacy_sources.get(row["id"], SOURCE)
                 if source is unreadable:
                     skipped += 1
-                if source != SOURCE:
+                if source not in DELEGATION_SOURCES:
                     continue
             sessions.append({
                 "threadId": row["id"], "name": row.get("name") or (row.get("preview") or "")[:72] or row["id"],
@@ -228,12 +230,15 @@ def collect(turn):
 
 def mode_file(thread_id):
     home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-    return home / "antigravity-codex" / "modes" / identifier(thread_id)
+    return home / "codex-delegate" / "modes" / identifier(thread_id)
 
 
 def recorded_mode(thread_id):
+    path = mode_file(thread_id)
+    if not path.is_file():
+        path = path.parents[2] / "antigravity-codex" / "modes" / path.name
     try:
-        mode = mode_file(thread_id).read_text(encoding="ascii").strip()
+        mode = path.read_text(encoding="ascii").strip()
     except FileNotFoundError:
         return None
     return mode if mode in ("read-only", "workspace-write") else None
@@ -354,16 +359,17 @@ def run_turn(client, args, prompt, cwd, scratch_message=None):
 
 
 def scratch_message_path(path):
-    home = Path.home().resolve()
-    roots = {home / ".gemini" / app / "brain" for app in ("antigravity", "antigravity-cli")}
-    if (not path.is_absolute() or path.parent.name.casefold() != "scratch"
-            or path.parent.parent.parent not in roots
+    if (not path.is_absolute() or path.is_symlink()
             or not re.fullmatch(r"codex-message-[0-9a-f]{32}\.txt", path.name, re.IGNORECASE)):
-        raise ValueError("--consume-message-file requires a generated message under the current user's "
-                         "Antigravity or Antigravity CLI conversation scratch directory.")
+        raise ValueError("--consume-message-file requires an absolute path to a generated scratch message.")
     resolved = path.resolve(strict=True)
-    if resolved != path or not resolved.is_file():
-        raise ValueError("The scratch message must be a regular file in the conversation scratch directory.")
+    home = Path.home().resolve()
+    legacy_roots = {home / ".gemini" / app / "brain" for app in ("antigravity", "antigravity-cli")}
+    in_skill_scratch = resolved.parent.parent == scratch_root()
+    in_legacy_scratch = (resolved.parent.name.casefold() == "scratch"
+                         and resolved.parent.parent.parent in legacy_roots)
+    if not resolved.is_file() or not (in_skill_scratch or in_legacy_scratch):
+        raise ValueError(f"The message must be a regular file under the current user's {scratch_root()}.")
     return resolved
 
 

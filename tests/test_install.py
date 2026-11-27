@@ -21,18 +21,14 @@ class InstallTest(unittest.TestCase):
 
     def test_launcher_in_profile_with_spaces_and_apostrophe(self):
         with tempfile.TemporaryDirectory() as temp:
-            config = Path(temp) / "O'Brien profile" / ".gemini" / "config"
-            skill = manage.SKILL / "SKILL.md"
-            manage.deploy(skill, config)
-            scripts = config / manage.SCRIPTS
-            scripts.mkdir()
+            scripts = Path(temp) / "O'Brien profile" / "custom skills" / "codex-delegate" / "scripts"
+            scripts.mkdir(parents=True)
             with patch.object(Path, "home", return_value=Path(temp) / "O'Brien profile"):
                 subprocess.run([sys.executable, "-m", "venv", "--without-pip", setup_runtime.runtime_env()],
                                check=True)
                 with patch.object(setup_runtime, "SCRIPTS", scripts):
                     paths = setup_runtime.launchers()
             self.assertTrue(paths["runtimeExists"])
-            self.assertEqual((config / skill).read_bytes(), (manage.ROOT / skill).read_bytes())
             shell = (["powershell.exe", "-NoProfile", "-NonInteractive", "-Command"]
                      if sys.platform == "win32" else ["/bin/sh", "-c"])
             for key, launcher in (("readOnly", "codex_ro.py"), ("workspaceWrite", "codex_rw.py")):

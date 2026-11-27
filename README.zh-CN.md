@@ -1,48 +1,32 @@
-# Antigravity Codex Subagent
+# Codex Delegate
 
 [English](README.md)
 
-在 Windows 或 Linux 上，你可以让 Antigravity CLI 或 IDE 中的代理把任务交给 Codex，查看它的进度，在运行中补充指令，或在重启后继续同一段对话。Antigravity 代理通过官方 Python Codex SDK 发送消息。
-
-## 准备环境
-
-- 安装 Antigravity CLI 或 IDE、Git 和带 `venv` 的 Python 3.10 或更高版本。Debian 和 Ubuntu 可能需要安装 `python3-venv`。
-- 使用 `npx` 安装时，请先安装包含 npm 的 Node.js。
-- 为运行 Antigravity 的操作系统账号配置 Codex 身份验证。如果已经在用 Codex CLI，可以运行 `codex login status` 查看登录状态。[Codex 身份验证文档](https://developers.openai.com/codex/auth)
+在提供终端的 Agent Skills 宿主中，可以使用同一个技能把本地任务交给 Codex。技能在 Windows、Linux 和 macOS 上通过官方 Python SDK 建立和续接会话，也支持查看进度、运行中插话和停止任务。
 
 ## 安装技能
 
-1. 通过 Skills CLI 全局安装，Antigravity CLI 和 IDE 共用这一份技能。
+1. 运行以下命令并选择你的 agent。全局安装可加 `--global`，也可用 `--agent <名称>` 直接选择。
 
    ```text
-   npx skills add white-inker/antigravity-codex-subagent --skill codex-delegate --agent antigravity --global --copy --yes
+   npx skills add white-inker/codex-subagent --skill codex-delegate
    ```
 
-   只为当前项目安装时，在项目根目录运行同一条命令并去掉 `--global`。技能会安装到项目内的 `.agents/skills/codex-delegate`。[Skills CLI](https://github.com/vercel-labs/skills) · [Antigravity 技能目录](https://antigravity.google/docs/skills)
+   如果安装器没有对应选项，把整个 `skills/codex-delegate` 目录复制到宿主的技能目录。[Skills CLI](https://github.com/vercel-labs/skills) · [Agent Skills 规范](https://agentskills.io/specification)
 
-2. 初始化全局安装的 Python SDK。如果是项目安装，把命令中的技能路径替换成项目中的实际路径。
-
-   **Linux**
+2. 在已安装的技能目录中打开终端。需要带 `venv` 的 Python 3.10 或更新版本。Debian 和 Ubuntu 可能还需要安装 `python3-venv`。
 
    ```bash
-   python3 "$HOME/.gemini/config/skills/codex-delegate/scripts/setup_runtime.py" install
+   python3 scripts/setup_runtime.py install
    ```
 
-   **Windows PowerShell**
+   Windows 用 `python scripts/setup_runtime.py install`。脚本会安装指定版本的 SDK，成功读取本机会话历史后显示 `Installation verified.`。虚拟环境保存在技能目录之外。
 
-   ```powershell
-   python "$HOME/.gemini/config/skills/codex-delegate/scripts/setup_runtime.py" install
-   ```
-
-   成功读取本机会话历史后会显示 `Installation verified.`。虚拟环境放在技能目录之外，更新技能时可以直接替换技能文件。
-
-3. 新建 Antigravity 对话以加载技能。
-
-如果还需要安装可选的原生子代理定义，克隆本仓库后，在仓库目录运行 `python manage.py install`。Linux 使用 `python3 manage.py install`。
+3. 在运行 agent 的操作系统账号下登录 Codex。已经在用 Codex CLI 时，可用 `codex login status` 检查登录状态。重新加载宿主的技能，然后在对话里明确请 agent 使用 Codex。[Codex 身份验证文档](https://developers.openai.com/codex/auth)
 
 ## 尝试只读任务
 
-在新对话中告诉 Antigravity 代理：
+在新对话中告诉 你的 agent：
 
 > 用 Codex 以只读方式检查这个仓库，会话命名为 test-guide。哪个文件测试运行中插话？怎么运行这个测试？
 
@@ -50,17 +34,17 @@ Codex 应该会指出 `tests/test_steering.py`。等它回复后，继续问“�
 
 ## 查看进度、插话或续接
 
-| 什么时候 | 对 Antigravity 代理说 | 预期结果 |
+| 什么时候 | 对 你的 agent说 | 预期结果 |
 | --- | --- | --- |
 | 任务正在运行 | “Codex 查到哪里了？把最新的测试输出给我看。” | 代理读取原后台任务的日志，包括公开进度消息、命令、输出、退出状态和变动文件路径。 |
 | 希望停止当前任务 | “停止当前 Codex 回合。” | 代理发出停止请求。原任务返回 `interrupted`（退出码 130）后，代理确认“已按你的要求停止”，并报告已经确认的文件改动。 |
 | 需要调整正在进行的工作 | “再看一下，如果补充指令发出时原回合已经结束，会发生什么？” | `steer` 把指令发给活跃回合。`accepted` 表示 Codex 已接收，最终答复仍由原任务给出。 |
 | 本轮已经结束 | “继续 test-guide，解释一下它怎么处理过期的回合 ID。” | `resume` 在同一个 Codex 线程中开启下一轮。 |
-| 重启反重力，或从 CLI 切换到 IDE | “列出我的 Codex 会话，然后继续 test-guide。” | 代理从本机历史中找回原线程及其工作目录。 |
+| 重启宿主或切换客户端 | “列出我的 Codex 会话，然后继续 test-guide。” | 代理从本机历史中找回原线程及其工作目录。 |
 
-想连续聊天时，说“我要和 Codex 对话”。回合 ID 出现后，代理用 `steer` 把新消息送入正在运行的回合。启动期间 ID 尚未出现时，代理会告诉你消息还没发出，可以稍后重发。上一轮结束后，用 `resume` 在同一线程续接。输入 `/codex-exit` 可返回 Antigravity。
+想连续聊天时，说“我要和 Codex 对话”。回合 ID 出现后，代理用 `steer` 把新消息送入正在运行的回合。启动期间 ID 尚未出现时，代理会告诉你消息还没发出，可以稍后重发。上一轮结束后，用 `resume` 在同一线程续接。输入 `/codex-exit` 可返回当前 agent。
 
-任务转入后台时，代理会告知已取得的 ID，在收到 Antigravity 的完成通知后报告结果。直接对话保留每条消息和答复的原文。需要翻译或摘要时请明确说明。委派任务时，代理可以单独补充相关背景。跨客户端续接时，两端应使用同一个操作系统账号、同一个 Codex 历史目录（如果设置了 `CODEX_HOME`，两端的值应一致）以及原项目目录或工作树。
+任务转入后台时，代理会告知已取得的 ID，在后台任务结束后报告结果。直接对话保留每条消息和答复的原文。需要翻译或摘要时请明确说明。委派任务时，代理可以单独补充相关背景。跨客户端续接时，两端应使用同一个操作系统账号、同一个 Codex 历史目录（如果设置了 `CODEX_HOME`，两端的值应一致）以及原项目目录或工作树。
 
 ## 延续工作区权限
 
@@ -76,8 +60,8 @@ Codex 应该会指出 `tests/test_steering.py`。等它回复后，继续问“�
 
 | 任务 | 命令 | 预期结果 |
 | --- | --- | --- |
-| 更新技能 | `python manage.py update` | 以 `--ff-only` 拉取最新提交，安装并验证。新建 Antigravity 对话即可加载更新。 |
-| 检查安装 | `python manage.py check` | 检查已安装的文件并查询本机会话历史。首次使用时，会话列表可以为空。 |
+| 更新技能 | `python manage.py update` | 以 `--ff-only` 拉取最新提交并更新源码目录使用的运行环境。 |
+| 检查安装 | `python manage.py check` | 检查运行环境并查询本机会话历史。首次使用时，会话列表可以为空。 |
 | 运行集成测试 | `python manage.py test` | 使用已安装的 SDK、临时 Codex 历史目录和本地模拟模型运行仓库中的测试。通过时显示 `OK`。 |
 
 ## 排查会话问题
@@ -93,4 +77,4 @@ Codex 应该会指出 `tests/test_steering.py`。等它回复后，继续问“�
 
 只读和写入入口各有独立审批前缀，每个前缀都包含解释器及对应脚本路径。希望逐次审查时，可以对写入调用选择单次批准。升级后请移除旧 `codex.py` 入口的长期审批。Windows 使用命名管道，Linux 使用 Unix 套接字，控制入口只允许该回合所属的操作系统账号访问。
 
-PowerShell 调用示例、UTF-8 文件输入和 JSON 输出字段见[启动器参考](skills/codex-delegate/references/usage.md)。可选的 Antigravity 原生子代理窗口见[代理定义](agents/codex.md)。
+启动器调用示例、UTF-8 文件输入和 JSON 输出字段见[启动器参考](skills/codex-delegate/references/usage.md)。

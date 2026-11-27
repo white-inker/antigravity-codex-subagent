@@ -38,7 +38,7 @@ class ResultTest(unittest.TestCase):
         self.assertEqual(result["finalResponse"], "First\n\nLast")
         self.assertEqual((empty["status"], empty["finalResponse"]), ("completed", ""))
 
-    def test_scratch_messages_must_be_in_the_current_antigravity_profile(self):
+    def test_scratch_messages_must_be_in_the_current_user_profile(self):
         with tempfile.TemporaryDirectory() as temp:
             profile = Path(temp)
             scratch = profile / ".gemini/antigravity/brain/conversation/scratch"
@@ -48,14 +48,19 @@ class ResultTest(unittest.TestCase):
             filename = f"codex-message-{'f' * 32}.txt"
             generated = scratch / filename
             generated.write_bytes(b"message")
+            portable = profile / ".codex-delegate/scratch/conversation" / filename
+            portable.parent.mkdir(parents=True)
+            portable.write_bytes(b"portable message")
             outside = profile / "brain/conversation/scratch" / filename
             outside.parent.mkdir(parents=True)
             outside.write_bytes(b"unrelated")
             with patch.object(Path, "home", return_value=profile):
-                self.assertEqual(scratch_message_path(generated), generated)
-                for path in (outside, existing):
-                    with self.assertRaisesRegex(ValueError, "current user's"):
-                        scratch_message_path(path)
+                self.assertEqual(scratch_message_path(generated), generated.resolve())
+                self.assertEqual(scratch_message_path(portable), portable.resolve())
+                with self.assertRaisesRegex(ValueError, "current user's"):
+                    scratch_message_path(outside)
+                with self.assertRaisesRegex(ValueError, "generated scratch message"):
+                    scratch_message_path(existing)
 
     def test_usage_is_difference_between_cumulative_snapshots(self):
         def usage(total, last):

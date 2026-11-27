@@ -1,33 +1,31 @@
 ---
 name: codex-delegate
-description: Use in Antigravity CLI or IDE on Windows and Linux to delegate to Codex on explicit request, continue an authorized session, steer or stop a turn, or list saved sessions.
+description: Delegate tasks to Codex on explicit request using the official Python SDK. Start, list, resume, steer, or stop local Codex sessions from a shell-capable agent on Windows, Linux, or macOS.
 ---
 
-# Talk to Codex
+# Delegate to Codex
 
-Use the Python SDK from the current Antigravity agent. A request to list history authorizes only listing. Workspace writes require user authorization for the project and task. Open the native subagent window only on request.
+Use this skill when the user explicitly asks for Codex. A request to list history authorizes only listing. Get the user's authorization before making workspace edits. Preserve the user's instructions and mark any extra context you add.
 
-## Pick the launcher
+## Choose a launcher
 
-| Launcher | Prefix from setup | Actions |
-| --- | --- | --- |
-| Read-only | `readOnly` | `list`, read-only `new` and `resume`, controls for read-only turns |
-| Workspace-write | `workspaceWrite` | Writable `new` and `resume`, controls for writable turns |
+From the directory of this skill, locate `scripts/setup_runtime.py`. Run it by absolute path with `python` on Windows or `python3` on Linux and macOS. The `paths` subcommand prints prefixes for the host shell. If the runtime is missing, follow [setup and troubleshooting](references/usage.md).
 
-Run `scripts/setup_runtime.py paths` with `python` on Windows or `python3` on Linux. Use the absolute script path relative to the loaded `SKILL.md` and the returned launcher prefix for the current shell. If the runtime is missing, follow the [setup instructions](references/usage.md). Include `--cwd '<project>'` for turns and controls, and to filter history by project. Omit it for all projects.
+| Prefix | Actions |
+| --- | --- |
+| `readOnly` | `list`, read-only `new` and `resume`, controls for read-only turns |
+| `workspaceWrite` | Writable `new` and `resume`, controls for writable turns |
 
-The launcher needs access to the host Codex store and the live control endpoint. On Windows use `BypassSandbox: true` for the launcher. On Linux follow the host's approval process if the sandbox blocks that access. Use one-time approval for project-installed launchers and writable calls. A standing approval for a global launcher must include both the interpreter and the exact script path.
+Use the returned prefix with `--cwd '<project>'` for turns and controls. For history, use `list` with `--cwd` to filter by project, or omit it to search across projects. The runner needs access to local Codex state and its control endpoint. Follow the host's terminal and approval rules. Use one-time approval for writable calls and project-installed launchers where available. A standing approval must include the interpreter and exact launcher script.
 
-Use `WaitMsBeforeAsync: 1000` for new and resumed turns and `10000` for other actions. Report the background task ID and known Codex IDs, then yield. Use completion notifications to collect the original task result. Read its log for progress or missing IDs when needed.
+## Run or continue a turn
 
-## Send and route messages
+Start with `--action new --message '<task>'`. Get the current thread's saved ID, working directory, and mode from its output or from `--action list`. Continue from the same directory with `--action resume --thread '<threadId>'` and the matching launcher.
 
-For a task, preserve the user's instructions and supply any agent context separately. For direct chat, confirm forwarding before starting and advertise `/codex-exit`. Forward messages verbatim and relay the reply in its original language unless the user requests a translation or summary. Exit only on the standalone command `/codex-exit` or an explicit request to return to Antigravity.
+If the host can launch background tasks, keep the original task handle and tell the user how to ask for progress or stop it. Read the original task's output for the thread ID, turn ID, progress, and final JSON. Use the host's completion notification if available.
 
-Keep direct-chat routing in `<appDataDir>/brain/<conversation-id>/scratch/codex-chat.json` using the host file tools. Read it before routing messages or notifications. After explicit opt-in, record `enabled`, `taskId`, `workingDirectory`, `mode`, `threadId` and `turnId` as they become known. Apply completion notifications only to the matching task ID. On exit set `enabled` to false. Store only routing metadata.
+For a running turn and a user-requested follow-up, invoke the same launcher with `--action steer --thread '<threadId>' --turn '<turnId>'` and the new message. If the turn ID is unavailable, check the original task once and tell the user to resend when the ID is available. When the task has finished, use `resume`. Retry an undelivered steer only after confirming the original outcome. For a stop request, use `interrupt` with the active IDs and confirm the stop once the original task reports `interrupted`.
 
-While a turn runs, use the same launcher, canonical directory, and `--thread` and `--turn` IDs with `--action steer`. If the turn ID is missing, inspect the original log once. If it is still unavailable, tell the user their message has not been sent and can be resent when Codex is ready. Once the turn ends, use `--action resume --thread '<threadId>'`. Retry a steer as a resume only if the original task has ended and delivery failed definitively. Use `interrupt` when asked to stop. Confirm the stop on the original task's `interrupted` result and exit 130.
+For literal or private input, place a UTF-8 file named `codex-message-<32 hex digits>.txt` in a unique subdirectory of the `scratchRoot` printed by `paths`. Pass its absolute path via `--consume-message-file`. It is deleted after acceptance, so reuse it if the turn ended before a steer arrived. Use `--message-file` for input files to keep.
 
-Use `--message 'text'` for short messages. For literal or private input, write a unique UTF-8 scratch file named `codex-message-<32 hex digits>.txt`. Pass its absolute path via `--consume-message-file` under the installed Antigravity profile. The launcher deletes it after Codex accepts the message. If the turn ended before a steer arrived, reuse the same file for the authorized resume. Use `--message-file` for input files to keep.
-
-Read [launcher examples and troubleshooting](references/usage.md) for exact commands, approval migration, recovery, model settings, and result fields.
+For direct chat, enter only on request and say that `/codex-exit` returns to the host agent. Forward the user's messages verbatim. Relay Codex's reply in its original language unless the user requests translation or a summary. See [direct chat and examples](references/usage.md).

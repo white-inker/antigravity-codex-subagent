@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 12
     env:
@@ -33,13 +33,17 @@ jobs:
           node-version: "24"
       - name: Install the skill with npx and verify the installed runtime
         run: |
-          npx --yes skills add . --skill codex-delegate --agent antigravity --global --copy --yes
+          npx --yes skills add . --skill codex-delegate --agent codex --global --copy --yes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $setup = Join-Path $HOME '.gemini/config/skills/codex-delegate/scripts/setup_runtime.py'
+          $setup = Join-Path $HOME '.agents/skills/codex-delegate/scripts/setup_runtime.py'
           python $setup install
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (Test-Path (Join-Path (Split-Path $setup) '__pycache__')) {
             throw 'The installed skill directory was modified by the launcher'
           }
+          npx --yes skills add . --skill codex-delegate --agent claude-code --global --copy --yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = Join-Path $HOME '.claude/skills/codex-delegate/scripts/setup_runtime.py'
+          python $setup check
       - name: Run integration tests
         run: python manage.py test

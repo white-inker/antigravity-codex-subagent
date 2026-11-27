@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/codex-deleg
 if sys.platform == "win32":
     from steering_windows import connect, control_turn, own_thread, pipe_address, steering_endpoint
 else:
-    from steering_linux import control_turn, own_thread, runtime_directory, socket_address, steering_endpoint
+    from steering_unix import control_turn, own_thread, runtime_directory, socket_address, steering_endpoint
 
 
 class PipeTest(unittest.TestCase):
@@ -28,8 +28,8 @@ class PipeTest(unittest.TestCase):
             response = control_turn(turn.thread_id, turn.id, "read-only", "interrupt")
         self.assertEqual(response["status"], "interruptRequested")
 
-    @unittest.skipUnless(sys.platform == "linux", "Linux control socket")
-    def test_linux_socket_is_private_and_removed_when_turn_finishes(self):
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "Unix control socket")
+    def test_unix_socket_is_private_and_removed_when_turn_finishes(self):
         import socket
 
         turn = SimpleNamespace(thread_id=uuid4().hex, id=uuid4().hex, interrupt=lambda: None)
