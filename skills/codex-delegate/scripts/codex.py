@@ -3,13 +3,14 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, gettempdir
 
 from openai_codex import CodexConfig, CodexError, Sandbox, Thread
 from openai_codex.client import CodexClient
@@ -44,7 +45,7 @@ def arguments(launcher_mode):
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument("--message", help="Message to send directly")
     inputs.add_argument("--message-file", type=Path, help="Read the exact message from a UTF-8 file")
-    inputs.add_argument("--consume-message-file", type=Path, help="Read and delete a generated scratch message")
+    inputs.add_argument("--consume-message-file", type=Path, help="Read a generated temporary message and delete it after delivery")
     parser.add_argument("--mode", choices=("read-only", "workspace-write"))
     parser.add_argument("--model")
     parser.add_argument("--effort", choices=["default", *(e.value for e in ReasoningEffort)],
@@ -333,7 +334,7 @@ def run_turn(client, args, prompt, cwd, scratch_message=None):
                     print(f"[codex] {name_warning}", file=sys.stderr, flush=True)
             model = response.model
             turn = thread.turn(prompt, sandbox=Sandbox(mode), effort=ReasoningEffort(effort) if effort else None)
-            remove_delivered_message(scratch_message)
+            remove_delivered_message(scratch_message, cwd)
             effort = effort or response.reasoning_effort
         except CodexError as exc:
             diagnostic = model_error(str(exc), model, effort)
@@ -358,27 +359,36 @@ def run_turn(client, args, prompt, cwd, scratch_message=None):
                 "model": model, "effort": ReasoningEffort(effort).value if effort else None, **result}
 
 
-def scratch_message_path(path):
-    if (not path.is_absolute() or path.is_symlink()
-            or not re.fullmatch(r"codex-message-[0-9a-f]{32}\.txt", path.name, re.IGNORECASE)):
+def scratch_message_path(path, cwd):
+    if not path.is_absolute() or not re.fullmatch(r"codex-message-[0-9a-f]{32}\.txt", path.name, re.IGNORECASE):
         raise ValueError("--consume-message-file requires an absolute path to a generated scratch message.")
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError("--consume-message-file requires a regular file. Use --message-file to keep the input file.")
     resolved = path.resolve(strict=True)
+    if resolved.is_relative_to(cwd):
+        raise ValueError("Cannot consume a file inside the project directory. Use --message-file to keep it.")
+
     home = Path.home().resolve()
     legacy_roots = {home / ".gemini" / app / "brain" for app in ("antigravity", "antigravity-cli")}
-    in_skill_scratch = resolved.parent.parent == scratch_root(home)
+    message_dirs = (resolved.parent, resolved.parent.parent)
+    in_skill_scratch = scratch_root(home) in message_dirs
     in_legacy_scratch = (resolved.parent.name.casefold() == "scratch"
                          and resolved.parent.parent.parent in legacy_roots)
-    if not resolved.is_file() or not (in_skill_scratch or in_legacy_scratch):
-        raise ValueError(f"The message must be a regular file under the current user's {scratch_root()}.")
+    if not (in_skill_scratch or in_legacy_scratch) and Path(gettempdir()).resolve() not in message_dirs:
+        raise ValueError("The message file must be in an allowed temporary directory. Use --message-file to keep it.")
     return resolved
 
 
-def remove_delivered_message(path):
+def remove_delivered_message(path, cwd):
     if path is None:
         return
     try:
+        if scratch_message_path(path, cwd) != path:
+            raise ValueError("The scratch path changed after the message was read.")
         path.unlink(missing_ok=True)
-    except OSError as error:
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError, RuntimeError) as error:
         print(f"[codex] Message delivered, but scratch cleanup failed: {error}", file=sys.stderr, flush=True)
         return
     if path.parent.parent == scratch_root(Path.home().resolve()):
@@ -400,7 +410,7 @@ def main(launcher_mode):
         if args.action == "interrupt":
             return control_turn(args.thread, args.turn, args.launcher_mode, "interrupt")
         if args.consume_message_file is not None:
-            scratch_message = scratch_message_path(args.consume_message_file)
+            scratch_message = scratch_message_path(args.consume_message_file, cwd)
             prompt = scratch_message.read_bytes().decode("utf-8-sig")
         elif args.message_file is not None:
             prompt = args.message_file.read_bytes().decode("utf-8-sig")
@@ -415,7 +425,7 @@ def main(launcher_mode):
         if args.action == "steer":
             receipt = control_turn(args.thread, args.turn, args.launcher_mode, "steer", prompt)
             if receipt["status"] == "accepted":
-                remove_delivered_message(scratch_message)
+                remove_delivered_message(scratch_message, cwd)
             return receipt
     with CodexClient(CodexConfig(cwd=str(cwd))) as client:
         client.initialize()

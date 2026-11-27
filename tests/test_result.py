@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/codex-delegate/scripts"))
-from codex import TOKEN_FIELDS, collect, model_error, run_turn, scratch_message_path
+from codex import TOKEN_FIELDS, collect, model_error, remove_delivered_message, run_turn, scratch_message_path
 from workspace import workspace_changes, workspace_snapshot
 from openai_codex.generated.v2_all import ThreadItem
 
@@ -38,29 +38,68 @@ class ResultTest(unittest.TestCase):
         self.assertEqual(result["finalResponse"], "First\n\nLast")
         self.assertEqual((empty["status"], empty["finalResponse"]), ("completed", ""))
 
-    def test_scratch_messages_must_be_in_the_current_user_profile(self):
+    def test_scratch_messages_use_allowed_directories_outside_the_project(self):
         with tempfile.TemporaryDirectory() as temp:
-            profile = Path(temp)
-            scratch = profile / ".gemini/antigravity/brain/conversation/scratch"
-            scratch.mkdir(parents=True)
-            existing = scratch / "instructions.txt"
-            existing.write_bytes(b"keep")
+            root = Path(temp).resolve()
+            profile = root / "profile"
+            system_temp = root / "system-temp"
+            skill_scratch = profile / ".codex-delegate/scratch"
+            host_scratch = profile / ".gemini/antigravity/brain/conversation/scratch"
+            project = system_temp / "project"
             filename = f"codex-message-{'f' * 32}.txt"
-            generated = scratch / filename
-            generated.write_bytes(b"message")
-            portable = profile / ".codex-delegate/scratch/conversation" / filename
-            portable.parent.mkdir(parents=True)
-            portable.write_bytes(b"portable message")
-            outside = profile / "brain/conversation/scratch" / filename
-            outside.parent.mkdir(parents=True)
-            outside.write_bytes(b"unrelated")
-            with patch.object(Path, "home", return_value=profile):
-                self.assertEqual(scratch_message_path(generated), generated.resolve())
-                self.assertEqual(scratch_message_path(portable), portable.resolve())
-                with self.assertRaisesRegex(ValueError, "current user's"):
-                    scratch_message_path(outside)
+            allowed = (system_temp, system_temp / "agent", skill_scratch,
+                       skill_scratch / "conversation", host_scratch)
+            too_deep = (system_temp / "agent/subfolder", skill_scratch / "agent/subfolder")
+            for directory in (*allowed, *too_deep, project, project / "subdir"):
+                directory.mkdir(parents=True, exist_ok=True)
+                (directory / filename).write_bytes(b"message")
+            existing = host_scratch / "instructions.txt"
+            existing.write_bytes(b"keep")
+            nonfile = system_temp / f"codex-message-{'a' * 32}.txt"
+            nonfile.mkdir()
+            with patch.object(Path, "home", return_value=profile), patch("codex.gettempdir", return_value=str(system_temp)):
+                for directory in allowed:
+                    message = directory / filename
+                    self.assertEqual(scratch_message_path(message, project), message)
+                for directory in too_deep:
+                    with self.assertRaisesRegex(ValueError, "allowed temporary directory"):
+                        scratch_message_path(directory / filename, project)
+                for directory in (project, project / "subdir"):
+                    with self.assertRaisesRegex(ValueError, "inside the project"):
+                        scratch_message_path(directory / filename, project)
                 with self.assertRaisesRegex(ValueError, "generated scratch message"):
-                    scratch_message_path(existing)
+                    scratch_message_path(existing, project)
+                with self.assertRaisesRegex(ValueError, "regular file"):
+                    scratch_message_path(nonfile, project)
+                remove_delivered_message(system_temp / "agent" / filename, project)
+            self.assertTrue((system_temp / "agent").is_dir())
+            self.assertFalse((system_temp / "agent" / filename).exists())
+
+    @unittest.skipIf(sys.platform == "win32", "Creating symlinks may require Windows Developer Mode")
+    def test_cleanup_rechecks_symlinks_and_project_boundary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            system_temp = Path(temp).resolve()
+            project = system_temp / "project"
+            project.mkdir()
+            scratch = system_temp / "agent"
+            scratch.mkdir()
+            name = f"codex-message-{'f' * 32}.txt"
+            protected = project / name
+            protected.write_bytes(b"keep")
+            message = scratch / name
+            with patch("codex.gettempdir", return_value=str(system_temp)):
+                message.symlink_to(protected)
+                with self.assertRaisesRegex(ValueError, "regular file"):
+                    scratch_message_path(message, project)
+                message.unlink()
+                message.write_bytes(b"deliver")
+                accepted = scratch_message_path(message, project)
+                scratch.rename(system_temp / "prev")
+                scratch.symlink_to(project, target_is_directory=True)
+                with contextlib.redirect_stderr(io.StringIO()) as errors:
+                    remove_delivered_message(accepted, project)
+                self.assertIn("inside the project", errors.getvalue())
+            self.assertEqual(protected.read_bytes(), b"keep")
 
     def test_usage_is_difference_between_cumulative_snapshots(self):
         def usage(total, last):

@@ -48,19 +48,23 @@ When switching models, the runner omits the old thread's effort unless you pass 
 
 ## Preserve literal input
 
-Use `--message=-v` for a message that looks like an option. For multiline, private, or shell-sensitive input, use a UTF-8 file. Create a per-conversation subdirectory under the `scratchRoot` returned by `paths`. Use a generated name such as `codex-message-7caf37f2e1154326aa29257767cb5445.txt`.
+Use `--message=-v` for a message that looks like an option. For multiline, private, or shell-sensitive input, use a UTF-8 file. Automatic cleanup accepts regular files named `codex-message-<32 hex digits>.txt` in the runtime's system temp directory, in `scratchRoot`, or in a direct child of either. Existing supported host conversation scratch directories still qualify. Use an owner-only file or directory for sensitive input. Symbolic links and files inside the resolved `--cwd` project directory are excluded from automatic cleanup.
 
 ```text
 <readOnly-prefix> --cwd '/path/to/project' --action new --consume-message-file '<absolute scratch file>'
 ```
 
-The file stays available until a turn starts or Codex acknowledges a steer. Reuse the same file if a steer misses a turn that has finished. When delivery is uncertain, check the original task before retrying. If the host denies the launch or you abandon the message, remove the prepared file. An empty generated scratch subdirectory is removed after delivery. Codex's conversation history can retain the delivered message.
+The file stays available until a turn starts or Codex acknowledges a steer. Reuse the same file if a steer misses a turn that has finished. When delivery is uncertain, check the original task before retrying. If the host denies the launch or you abandon the message, remove the prepared file. An empty child of the skill's scratch directory can be removed after delivery. Codex's conversation history can retain the delivered message.
 
-If the host's scratch directory is easier to write, pass that file with `--message-file`. Clean up only the temporary file you created once delivery is confirmed. You can also use `--message-file` to send an existing file while preserving it.
+Use `--message-file` for any readable path, including an arbitrary host scratch directory or an existing project file. The launcher preserves that file. If you created it as temporary input, clean it up after confirming delivery.
 
 ## Route direct chat
 
-If your host exposes a stable conversation ID and writable conversation state, keep `enabled`, `taskId`, `workingDirectory`, `mode`, `threadId`, and `turnId` there as they become known. Apply task notifications only to the matching task. On `/codex-exit`, set `enabled` to false. Store metadata only. If the host offers no persistent conversation state, recover the thread through history and let the user select it before forwarding after a restart.
+Treat a standalone “come back”, “回来”, `/codex-exit`, or an explicit request to leave Codex chat as an exit. Forward messages where those words are part of ordinary content. On exit, turn off forwarding and clean up any unsent files you created.
+
+If the turn ID is still unavailable after one log check, save the user's exact follow-up as a UTF-8 scratch file and tell them it is queued. Keep an ordered list of pending file paths with the original task handle. When handling the next task update or user message, process any exit or stop request first, then deliver queued messages in order. Use `steer` if the original turn is active. If it completed, use `resume` on the same thread. Wait for confirmation before sending the next file, and check the original task when delivery is uncertain. Pause the queue if the user stops the turn, and resume delivery when they ask to continue.
+
+When the host exposes writable conversation state, persist `enabled`, `taskId`, `workingDirectory`, `mode`, `threadId`, `turnId`, and the ordered pending file paths there as they become known. Keep message contents in the scratch files. Apply notifications only to the matching task. If the host cannot persist state across a restart, recover the thread through history and let the user select it before forwarding.
 
 ## Interpret results
 

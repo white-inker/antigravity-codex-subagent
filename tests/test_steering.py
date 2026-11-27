@@ -198,6 +198,16 @@ class SteeringTest(unittest.TestCase):
         self.assertEqual(state.read_text(encoding="utf-8"), "{}")
         user_items = [item for item in server.requests[-1]["input"] if item.get("role") == "user"]
         self.assertEqual(user_items[-1]["content"][-1]["text"], message)
+        temp_message = root / message_file.name
+        temp_message.write_bytes(message.encode("utf-8"))
+        call("--action", "resume", "--thread", thread_id, "--consume-message-file", str(temp_message), launcher=WRITER)
+        self.assertFalse(temp_message.exists())
+        project_message = project / message_file.name
+        project_message.write_bytes(message.encode("utf-8"))
+        call("--action", "resume", "--thread", thread_id, "--consume-message-file", str(project_message),
+             error="inside the project", launcher=WRITER)
+        call("--action", "resume", "--thread", thread_id, "--message-file", str(project_message), launcher=WRITER)
+        self.assertEqual(project_message.read_bytes(), message.encode("utf-8"))
         downgraded = call("--action", "resume", "--thread", thread_id, "--mode", "read-only", "--message", "Inspect")
         self.assertEqual(downgraded["mode"], "read-only")
         self.assertEqual(call("--action", "resume", "--thread", thread_id, "--message", "Inspect again")["mode"], "read-only")

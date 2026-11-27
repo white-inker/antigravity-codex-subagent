@@ -42,7 +42,7 @@ Codex should identify `tests/test_steering.py`. Once it replies, ask “What doe
 | The turn has finished | “Continue test-guide and explain how it handles an expired turn ID.” | `resume` starts the next turn in the same Codex thread. |
 | You reopened the host or changed clients | “List my Codex sessions, then continue test-guide.” | The agent looks up the saved thread and its working directory. |
 
-For ongoing chat, say “I want to talk to Codex.” Once the turn ID is available, the agent forwards new messages to the running turn with `steer`. During startup, the agent tells you if it needs you to resend a message later. After completion, follow-ups use `resume` on the same thread. Enter `/codex-exit` to return to your agent.
+For ongoing chat, say “I want to talk to Codex.” If you send a follow-up while the turn is still starting, the agent saves it for delivery. It uses `steer` once the active turn is identifiable or `resume` on the same thread after completion. Say “come back” on its own or enter `/codex-exit` to return to your agent.
 
 The agent reports the available IDs when a task starts in the background and relays the result when the background task completes. Direct chat preserves the language of each message and reply. Ask explicitly for a translation or summary. For a delegated task, the agent can supply relevant context separately from your instructions. When switching clients, use the same operating system user, Codex home (`CODEX_HOME` if set), and original project directory or worktree.
 
