@@ -18,7 +18,7 @@ python scripts/setup_runtime.py paths --shell powershell
 
 On Windows, pass `--shell bash` for Git Bash or `--shell cmd` for Command Prompt. Plain `paths` also lists the available variants under `shells` in UTF-8 JSON. Parse the JSON and use the values for your shell as written. For paths containing `%` or `!`, use PowerShell or Bash because cmd may expand them.
 
-If `runtimeStatus` is `inaccessible`, request access through the host before trying again. This result leaves `runtimeExists` unknown. Run installation only when the runtime is missing or its dependencies need repair.
+If `runtimeStatus` is `inaccessible`, `runtimeExists` is unknown. Use the printed prefix for the intended launcher call with approved access. If the call fails, use its error to decide what to check. Run `check` or `install` with the required host access when diagnosing or repairing the runtime. Install only when the runtime is missing or its dependencies need repair.
 
 ## Run a turn or query history
 
@@ -55,6 +55,8 @@ Use `--message=-v` for a message that looks like an option. For multiline, priva
 ```
 
 The file stays available until a turn starts or Codex acknowledges a steer. Reuse the same file if a steer misses a turn that has finished. When delivery is uncertain, check the original task before retrying. If the host denies the launch or you abandon the message, remove the prepared file. An empty generated scratch subdirectory is removed after delivery. Codex's conversation history can retain the delivered message.
+
+If the host's scratch directory is easier to write, pass that file with `--message-file`. Clean up only the temporary file you created once delivery is confirmed. You can also use `--message-file` to send an existing file while preserving it.
 
 ## Route direct chat
 
