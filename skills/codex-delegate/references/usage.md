@@ -30,7 +30,7 @@ Replace `<readOnly-prefix>` and `<workspaceWrite-prefix>` with the literal value
 <readOnly-prefix> --cwd '/path/to/project' --action list --limit 1
 ```
 
-Use the first result for the latest session. Use its `mode` to select the launcher. If the result is empty and has a `nextCursor`, pass it with `--cursor` and the same filters. `--all` includes general Codex history. `skippedUnreadable` counts older rows whose source lookup failed.
+Reuse the known thread for related work in the same project. When recovering an earlier thread, filter with `--cwd` and select the session that fits the task. Use the first result when the user asks for the latest session. Use the recorded `mode` and current authorization to select the launcher. If the result is empty and has a `nextCursor`, pass it with `--cursor` and the same filters. `--all` includes general Codex history. `skippedUnreadable` counts older rows whose source lookup failed.
 
 Use the same launcher as the active turn to steer or stop it. Replace the read-only prefix below with the write prefix for a writable turn.
 
@@ -44,7 +44,7 @@ Use the same launcher as the active turn to steer or stop it. Replace the read-o
 
 New sessions use the launcher's mode. Resume uses the recorded mode. To explicitly change it or continue a legacy thread missing its record, use the matching launcher with `--mode read-only` or `--mode workspace-write`. If the first turn failed to start, keep its logged thread ID and retry once the cause is resolved. An unnamed thread gets the recovery name `Retry <threadId>` in that case.
 
-When switching models, the runner omits the old thread's effort unless you pass one. Use `--effort default` to use the configured default even when keeping the same model.
+When setting `--model`, prefer an explicit `--effort` supported by that model. Use `--effort default` when the configured default is desired or support for a suitable explicit value is unclear. On resume, omitting `--effort` inherits the saved effort if the model stays the same. A different model uses its configured default unless you pass a supported effort.
 
 ## Preserve literal input
 

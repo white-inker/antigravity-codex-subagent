@@ -20,7 +20,9 @@ Use the returned prefix with `--cwd` for turns and controls. For history, use `l
 
 ## Run or continue a turn
 
-Start with `--action new --message '<task>'`. Get the current thread's saved ID, working directory, and mode from its output or from `--action list`. Continue from the same directory with `--action resume --thread '<threadId>'` and the matching launcher.
+Prefer reusing a Codex thread that matches the project and task. Use its known thread ID directly. If you need to recover it, run `--action list --cwd '<project>'` and look for the relevant session. When its turn has finished, use `--action resume --thread '<threadId>'` from the recorded working directory with the launcher for the authorized mode. Use `--action new` when the user asks for a fresh session or no existing thread fits.
+
+When you specify `--model`, prefer to pair it with an explicit `--effort` supported by that model and suited to the task. Honor the user's requested effort. If they leave effort to you and you cannot verify a suitable value, use `--effort default`.
 
 When the host supports background execution, set the initial foreground wait to about 1 second for `new` and `resume`, and about 10 seconds for `list`, `steer`, and `interrupt` to return JSON inline. Keep the original task handle for background calls and tell the user how to ask for progress or stop a turn. Read the original task's output for the thread ID, turn ID, progress, and final JSON. Use the host's completion notification if available.
 
