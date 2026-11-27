@@ -1,5 +1,8 @@
 """Workspace-write Codex turns and their live controls."""
-from codex import cli
+import sys
 
 if __name__ == "__main__":
+    sys.dont_write_bytecode = True
+    from codex import cli
+
     cli("workspace-write")

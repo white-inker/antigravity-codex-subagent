@@ -1,21 +1,39 @@
 # Launcher examples and troubleshooting
 
-## Run a turn or query history
+## Set up the installed skill
+
+Run the command for your platform from any directory. These paths are for a global Antigravity install. For a project install, use the actual skill directory under `.agents/skills`.
+
+```bash
+python3 "$HOME/.gemini/config/skills/codex-delegate/scripts/setup_runtime.py" install
+python3 "$HOME/.gemini/config/skills/codex-delegate/scripts/setup_runtime.py" paths
+```
 
 ```powershell
-__CODEX_RO__ --cwd 'C:\path\to\project' --action new --message 'Why does the login test fail?'
-__CODEX_RW__ --cwd 'C:\path\to\project' --action new --message 'Fix the login test.'
-__CODEX_RO__ --cwd 'C:\path\to\project' --action list --limit 1
+python "$HOME/.gemini/config/skills/codex-delegate/scripts/setup_runtime.py" install
+python "$HOME/.gemini/config/skills/codex-delegate/scripts/setup_runtime.py" paths
+```
+
+`install` creates a private virtual environment and installs the pinned Codex SDK. A successful check prints `Installation verified.` If Linux cannot create the environment, install your distribution's Python venv package, such as `python3-venv` on Debian or Ubuntu. The virtual environment is outside the skill directory, so a skill update can replace the package safely. Use `check` to verify the installation again.
+
+## Run a turn or query history
+
+Replace `<readOnly-prefix>` and `<workspaceWrite-prefix>` with the literal values printed by `paths`. Example arguments below use Linux paths. On Windows, use the generated PowerShell prefixes and Windows project paths.
+
+```text
+<readOnly-prefix> --cwd '/path/to/project' --action new --message 'Why does the login test fail?'
+<workspaceWrite-prefix> --cwd '/path/to/project' --action new --message 'Fix the login test.'
+<readOnly-prefix> --cwd '/path/to/project' --action list --limit 1
 ```
 
 Use the first result for the latest session. Use its `mode` to select the launcher. If the result is empty and has a `nextCursor`, pass it with `--cursor` and the same filters. `--all` includes general Codex history. `skippedUnreadable` counts older rows whose source lookup failed.
 
 Use the same launcher as the active turn to steer or stop it. Replace the read-only prefix below with the write prefix for a writable turn.
 
-```powershell
-__CODEX_RO__ --cwd 'C:\path\to\project' --action steer --thread '<threadId>' --turn '<turnId>' --message 'Also check expired tokens.'
-__CODEX_RO__ --cwd 'C:\path\to\project' --action interrupt --thread '<threadId>' --turn '<turnId>'
-__CODEX_RO__ --cwd 'C:\path\to\project' --action resume --thread '<threadId>' --message 'Continue.'
+```text
+<readOnly-prefix> --cwd '/path/to/project' --action steer --thread '<threadId>' --turn '<turnId>' --message 'Also check expired tokens.'
+<readOnly-prefix> --cwd '/path/to/project' --action interrupt --thread '<threadId>' --turn '<turnId>'
+<readOnly-prefix> --cwd '/path/to/project' --action resume --thread '<threadId>' --message 'Continue.'
 ```
 
 `accepted` means the steer reached the turn. `interruptRequested` confirms receipt of the request. Read final stdout JSON from the original task. After a timeout or uncertain delivery, check the original task before retrying.
@@ -38,11 +56,11 @@ Keep $name exactly as written.', [Text.UTF8Encoding]::new($false))
 $p
 ```
 
-```powershell
-__CODEX_RO__ --cwd 'C:\path\to\project' --action new --consume-message-file '<absolute scratch file>'
+```text
+<readOnly-prefix> --cwd '/path/to/project' --action new --consume-message-file '<absolute scratch file>'
 ```
 
-Automatic cleanup accepts the current user's `%USERPROFILE%\.gemini\antigravity\brain` and `%USERPROFILE%\.gemini\antigravity-cli\brain` conversation scratch directories. For a custom data directory, use `--message-file` and clean up the file you created when finished.
+Automatic cleanup accepts the current user's `~/.gemini/antigravity/brain` and `~/.gemini/antigravity-cli/brain` conversation scratch directories on Windows and Linux. For a custom data directory, use `--message-file` and clean up the file you created when finished.
 
 The file stays available until a turn starts or Codex acknowledges a steer. Reuse the same file if a steer misses a turn that has finished. When delivery is uncertain, check the original task before retrying. If Antigravity denies the launch or you abandon the message, remove the prepared file. Codex's conversation history can retain the delivered message.
 
@@ -52,7 +70,7 @@ The file stays available until a turn starts or Codex acknowledges a steer. Reus
 
 ## Recover an installation
 
-- **Old approval.** Remove any standing approval for the retired `codex.py` prefix. Approve the new read and write prefixes separately. A standing write approval also covers future writable turns and their controls. Use the exact installed prefix. Paths safe to use as a bare command start with the interpreter path. Paths with spaces or PowerShell metacharacters start with `&` and quote the interpreter. Codex uses `approvalPolicy: never` inside its selected sandbox, so report operations the inner sandbox blocks.
-- **Launcher missing.** Obtain the [project repository](https://github.com/white-inker/antigravity-codex-subagent) and run `python manage.py install` from the directory containing `manage.py`. Then run `python manage.py check`. A working install prints `Installation verified.` Open a new Antigravity conversation.
-- **Cannot reach an active turn.** Read its original task log for canonical working directory, IDs and launcher mode. Use the same Windows account and `CODEX_HOME`. New launchers control turns started by this version.
-- **Sign-in or SDK error.** Run `codex login status` under the same Windows user and sign in if needed. For an API provider, check its credentials. If Git is unavailable, install Git for Windows or use `--non-git` for a new turn that can skip its repository check.
+- **Old approval.** Remove any standing approval for the retired `codex.py` prefix. Approve the new read and write prefixes separately. A standing write approval also covers future writable turns and their controls. Use the exact installed prefix. On Windows, use the generated PowerShell quoting. On Linux, use the shell-quoted prefix. Use one-time approval for project-installed launchers. Codex uses `approvalPolicy: never` inside its selected sandbox, so report operations the inner sandbox blocks.
+- **Launcher missing.** Run `scripts/setup_runtime.py install` with the system Python from the installed skill, then open a new Antigravity conversation. If the skill files are missing, reinstall the skill.
+- **Cannot reach an active turn.** Read its original task log for canonical working directory, IDs and launcher mode. Use the same operating system account and `CODEX_HOME`. On Linux, the launcher uses an account-restricted Unix socket under `/tmp`. On Windows, it uses a named pipe with a per-account ACL.
+- **Sign-in or SDK error.** Run `codex login status` under the same operating system user and sign in if needed. For an API provider, check its credentials. If Git is unavailable, install Git or use `--non-git` for a new turn that can skip its repository check.

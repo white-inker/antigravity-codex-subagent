@@ -1,6 +1,6 @@
 ---
 name: codex
-description: Windows-only compatibility entry for an explicitly requested Antigravity Codex subagent window. Forward messages addressed to Codex through the local SDK.
+description: Windows and Linux compatibility entry for an explicitly requested Antigravity Codex subagent window. Forward messages addressed to Codex through the local SDK.
 mainAgent: false
 subagent: true
 commandExecutionPolicy: sandbox

@@ -16,8 +16,15 @@ from openai_codex.client import CodexClient
 from openai_codex.generated.v2_all import ReasoningEffort
 from pydantic import ValidationError
 
-from steering import control_turn, identifier, own_thread, steering_endpoint
+from steering import identifier
 from workspace import git_executable, workspace_changes, workspace_snapshot
+
+if sys.platform == "win32":
+    from steering_windows import control_turn, own_thread, steering_endpoint
+elif sys.platform == "linux":
+    from steering_linux import control_turn, own_thread, steering_endpoint
+else:
+    raise SystemExit("The Codex delegation skill supports Windows and Linux.")
 
 SOURCE = "antigravity"
 TOKEN_FIELDS = ("input_tokens", "cached_input_tokens", "cache_write_input_tokens",

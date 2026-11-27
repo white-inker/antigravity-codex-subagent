@@ -1,0 +1,45 @@
+name: Test the installed skill
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    env:
+      DISABLE_TELEMETRY: "1"
+      PYTHONUTF8: "1"
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install the skill with npx and verify the installed runtime
+        run: |
+          npx --yes skills add . --skill codex-delegate --agent antigravity --global --copy --yes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $setup = Join-Path $HOME '.gemini/config/skills/codex-delegate/scripts/setup_runtime.py'
+          python $setup install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path (Join-Path (Split-Path $setup) '__pycache__')) {
+            throw 'The installed skill directory was modified by the launcher'
+          }
+      - name: Run integration tests
+        run: python manage.py test

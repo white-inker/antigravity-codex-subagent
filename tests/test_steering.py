@@ -70,7 +70,6 @@ class ModelEndpoint(BaseHTTPRequestHandler):
                 self.server.delivery_timed_out = not self.server.release.wait(25)
 
 
-@unittest.skipUnless(sys.platform == "win32", "Windows named pipe transport")
 class SteeringTest(unittest.TestCase):
     def setUp(self):
         contexts = ExitStack()
@@ -90,8 +89,10 @@ class SteeringTest(unittest.TestCase):
             'model = "gpt-5.4"\nmodel_reasoning_effort = "low"\nmodel_provider = "test"\n[model_providers.test]\n'
             f'name = "test"\nbase_url = "http://127.0.0.1:{server.server_port}/v1"\n'
             'wire_api = "responses"\nsupports_websockets = false\n', encoding="utf8")
-        env = dict(os.environ, CODEX_HOME=str(home), USERPROFILE=str(root / "profile"), HTTP_PROXY="http://127.0.0.1:1",
+        profile_key = "USERPROFILE" if sys.platform == "win32" else "HOME"
+        env = dict(os.environ, CODEX_HOME=str(home), HTTP_PROXY="http://127.0.0.1:1",
                    HTTPS_PROXY="http://127.0.0.1:1", NO_PROXY="127.0.0.1,localhost")
+        env[profile_key] = str(root / "profile")
         for key in ("OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL"):
             env.pop(key, None)
 
@@ -140,7 +141,7 @@ class SteeringTest(unittest.TestCase):
                 call("--action", "resume", "--thread", thread_id, message="overlap",
                      error="already has a delegated", launcher=WRITER)
                 message = "请检查这段原文：\r\n'@\r\nKeep $name unchanged."
-                scratch = Path(env["USERPROFILE"]) / ".gemini/antigravity-cli/brain/conversation/scratch"
+                scratch = root / "profile/.gemini/antigravity-cli/brain/conversation/scratch"
                 scratch.mkdir(parents=True)
                 message_file = scratch / f"codex-message-{'a' * 32}.txt"
                 message_file.write_bytes(message.encode("utf-8"))

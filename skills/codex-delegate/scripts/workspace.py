@@ -12,8 +12,8 @@ def git_executable():
     # Windows executable lookup can search the current directory before PATH.
     for entry in os.get_exec_path():
         directory = Path(entry.strip('"'))
-        git = directory / "git.exe"
-        if directory.is_absolute() and git.is_file():
+        git = directory / ("git.exe" if os.name == "nt" else "git")
+        if directory.is_absolute() and git.is_file() and os.access(git, os.X_OK):
             return git
     return None
 
