@@ -9,14 +9,14 @@ Use this skill when the user explicitly asks for Codex. A request to list histor
 
 ## Choose a launcher
 
-From the directory of this skill, locate `scripts/setup_runtime.py`. Run it by absolute path with `python` on Windows or `python3` on Linux and macOS. The `paths` subcommand prints prefixes for the host shell. If the runtime is missing, follow [setup and troubleshooting](references/usage.md).
+From the directory of this skill, locate `scripts/setup_runtime.py`. Run it by absolute path with `python` on Windows or `python3` on Linux and macOS. Use `paths --shell powershell`, `paths --shell bash`, or `paths --shell cmd` for the host's actual shell. If the runtime is missing, follow [setup and troubleshooting](references/usage.md).
 
 | Prefix | Actions |
 | --- | --- |
 | `readOnly` | `list`, read-only `new` and `resume`, controls for read-only turns |
 | `workspaceWrite` | Writable `new` and `resume`, controls for writable turns |
 
-Use the returned prefix with `--cwd '<project>'` for turns and controls. For history, use `list` with `--cwd` to filter by project, or omit it to search across projects. The runner needs access to local Codex state and its control endpoint. Follow the host's terminal and approval rules. Use one-time approval for writable calls and project-installed launchers where available. A standing approval must include the interpreter and exact launcher script.
+Use the returned prefix with `--cwd` for turns and controls. For history, use `list` with `--cwd` to filter by project, or omit it to search across projects. If the default sandbox restricts access to the runtime, local Codex state, network, or control endpoint, request permission through the host for setup and launcher calls before submitting them. Treat `runtimeStatus: inaccessible` as a permission issue and repeat the probe with approved access before installing anything. Use one-time approval for writable calls and project-installed launchers where available. A standing approval must include the interpreter and exact launcher script.
 
 ## Run or continue a turn
 

@@ -1,17 +1,25 @@
 """Exercise local pipe ownership, disconnects and bounded teardown."""
+from contextlib import ExitStack
+import json
+import os
+import socket
+import struct
 import sys
 import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "skills/codex-delegate/scripts"))
 if sys.platform == "win32":
     from steering_windows import connect, control_turn, own_thread, pipe_address, steering_endpoint
 else:
-    from steering_unix import control_turn, own_thread, runtime_directory, socket_address, steering_endpoint
+    from steering_unix import (
+        PACKET_LIMIT, control_address_key, control_turn, own_thread, runtime_directory, socket_address,
+        steering_endpoint, verify_peer,
+    )
 
 
 class PipeTest(unittest.TestCase):
@@ -30,8 +38,6 @@ class PipeTest(unittest.TestCase):
 
     @unittest.skipUnless(sys.platform in ("linux", "darwin"), "Unix control socket")
     def test_unix_socket_is_private_and_removed_when_turn_finishes(self):
-        import socket
-
         turn = SimpleNamespace(thread_id=uuid4().hex, id=uuid4().hex, interrupt=lambda: None)
         with steering_endpoint(turn, "workspace-write"):
             path = socket_address(turn.thread_id, turn.id, "workspace-write")
@@ -44,6 +50,46 @@ class PipeTest(unittest.TestCase):
             self.assertEqual(control_turn(turn.thread_id, turn.id, "workspace-write", "interrupt")["status"],
                              "interruptRequested")
         self.assertFalse(path.exists())
+
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "Unix control socket")
+    def test_unix_rejects_invalid_packets_without_stopping_listener(self):
+        turn = SimpleNamespace(thread_id=uuid4().hex, id=uuid4().hex, interrupt=lambda: None)
+        with steering_endpoint(turn, "read-only"):
+            path = socket_address(turn.thread_id, turn.id, "read-only")
+            for packet in (b"{invalid}\n", b"x" * PACKET_LIMIT + b"\n"):
+                with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+                    conn.settimeout(3)
+                    conn.connect(str(path))
+                    conn.sendall(packet)
+                    with conn.makefile("rb") as stream:
+                        self.assertIn("error", json.loads(stream.readline()))
+            self.assertEqual(control_turn(turn.thread_id, turn.id, "read-only", "interrupt")["status"],
+                             "interruptRequested")
+
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "Unix control socket")
+    def test_unix_socket_name_fits_macos_with_a_large_uid(self):
+        with patch("steering_unix.runtime_directory", return_value=Path("/tmp/codex-delegate-4294967294")):
+            path = socket_address("thread", "turn", "read-only")
+        self.assertLessEqual(len(os.fsencode(path)), 103)
+        self.assertEqual(len(path.name.removeprefix("turn-")), 32)
+
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "Unix control socket")
+    def test_client_can_control_turn_started_before_socket_names_were_shortened(self):
+        turn = SimpleNamespace(thread_id=uuid4().hex, id=uuid4().hex, interrupt=lambda: None)
+        legacy = runtime_directory() / f"turn-{control_address_key(turn.thread_id, turn.id, 'read-only')}"
+        with ExitStack() as stack:
+            with patch("steering_unix.socket_address", return_value=legacy):
+                stack.enter_context(steering_endpoint(turn, "read-only"))
+            self.assertEqual(control_turn(turn.thread_id, turn.id, "read-only", "interrupt")["status"],
+                             "interruptRequested")
+
+    @unittest.skipUnless(sys.platform == "linux", "Linux peer credentials")
+    def test_linux_peer_uid_is_unsigned(self):
+        uid = 2**31 + 123
+        conn = Mock()
+        conn.getsockopt.return_value = struct.pack("iII", 1234, uid, uid)
+        with patch("steering_unix.os.geteuid", return_value=uid):
+            verify_peer(conn)
 
     def test_owner_exits_even_if_sdk_control_has_not_returned(self):
         entered = threading.Event()

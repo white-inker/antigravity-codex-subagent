@@ -148,6 +148,7 @@ class SteeringTest(unittest.TestCase):
                 receipt = call(*route, turn_id, "--consume-message-file", str(message_file),
                                cwd=subdirectory / "..", launcher=WRITER)
                 self.assertFalse(message_file.exists())
+                self.assertFalse(scratch.exists())
                 self.assertEqual(receipt, {"status": "accepted", "threadId": thread_id, "turnId": turn_id})
                 self.assertIsNone(owner.poll())
             finally:
@@ -185,12 +186,16 @@ class SteeringTest(unittest.TestCase):
                         "--message", "Switch back with default effort", launcher=WRITER)
         self.assertEqual(switched["effort"], "low")
         self.assertEqual(server.requests[-1]["reasoning"]["effort"], "low")
+        scratch.mkdir()
+        state = scratch / "state.json"
+        state.write_text("{}", encoding="utf-8")
         message_file.write_bytes(message.encode("utf-8"))
         scratch_args = ("--consume-message-file", str(message_file))
         call(*route, turn_id, *scratch_args, error="No active turn", launcher=WRITER)
         self.assertEqual(message_file.read_bytes(), message.encode("utf-8"))
         call("--action", "resume", "--thread", thread_id, *scratch_args, launcher=WRITER)
         self.assertFalse(message_file.exists())
+        self.assertEqual(state.read_text(encoding="utf-8"), "{}")
         user_items = [item for item in server.requests[-1]["input"] if item.get("role") == "user"]
         self.assertEqual(user_items[-1]["content"][-1]["text"], message)
         downgraded = call("--action", "resume", "--thread", thread_id, "--mode", "read-only", "--message", "Inspect")

@@ -28,10 +28,12 @@ def main():
         subprocess.run([sys.executable, SETUP, action], cwd=ROOT, check=True)
     else:
         paths = subprocess.check_output([sys.executable, SETUP, "paths"], encoding="utf-8")
-        python = Path(json.loads(paths)["python"])
-        if not python.is_file():
+        runtime = json.loads(paths)
+        if runtime["runtimeStatus"] == "inaccessible":
+            parser.exit(1, "SDK runtime access denied. Run the tests from a terminal with approved access.\n")
+        if runtime["runtimeStatus"] == "missing":
             parser.exit(1, "SDK runtime missing. Run: python manage.py install\n")
-        subprocess.run([python, "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=ROOT, check=True)
+        subprocess.run([runtime["python"], "-m", "unittest", "discover", "-s", "tests", "-v"], cwd=ROOT, check=True)
 
 
 if __name__ == "__main__":

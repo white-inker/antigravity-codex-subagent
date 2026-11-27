@@ -6,19 +6,23 @@ Open a terminal in the installed skill directory reported by your installer. Use
 
 ```bash
 python3 scripts/setup_runtime.py install
-python3 scripts/setup_runtime.py paths
+python3 scripts/setup_runtime.py paths --shell bash
 ```
 
 ```powershell
 python scripts/setup_runtime.py install
-python scripts/setup_runtime.py paths
+python scripts/setup_runtime.py paths --shell powershell
 ```
 
 `install` creates a private virtual environment and installs the pinned Codex SDK. A successful check prints `Installation verified.` If Linux cannot create the environment, install your distribution's Python venv package, such as `python3-venv` on Debian or Ubuntu. The virtual environment is outside the skill directory, so a skill update can replace the package. Use `check` to verify the setup again.
 
+On Windows, pass `--shell bash` for Git Bash or `--shell cmd` for Command Prompt. Plain `paths` also lists the available variants under `shells` in UTF-8 JSON. Parse the JSON and use the values for your shell as written. For paths containing `%` or `!`, use PowerShell or Bash because cmd may expand them.
+
+If `runtimeStatus` is `inaccessible`, request access through the host before trying again. This result leaves `runtimeExists` unknown. Run installation only when the runtime is missing or its dependencies need repair.
+
 ## Run a turn or query history
 
-Replace `<readOnly-prefix>` and `<workspaceWrite-prefix>` with the literal values printed by `paths`. Example arguments below use Linux paths. On Windows, use the generated PowerShell prefixes and Windows project paths.
+Replace `<readOnly-prefix>` and `<workspaceWrite-prefix>` with the literal values printed by `paths --shell`. Quote the example arguments for your shell. In cmd, use double quotes around paths and messages.
 
 ```text
 <readOnly-prefix> --cwd '/path/to/project' --action new --message 'Why does the login test fail?'
@@ -50,7 +54,7 @@ Use `--message=-v` for a message that looks like an option. For multiline, priva
 <readOnly-prefix> --cwd '/path/to/project' --action new --consume-message-file '<absolute scratch file>'
 ```
 
-The file stays available until a turn starts or Codex acknowledges a steer. Reuse the same file if a steer misses a turn that has finished. When delivery is uncertain, check the original task before retrying. If the host denies the launch or you abandon the message, remove the prepared file. Codex's conversation history can retain the delivered message.
+The file stays available until a turn starts or Codex acknowledges a steer. Reuse the same file if a steer misses a turn that has finished. When delivery is uncertain, check the original task before retrying. If the host denies the launch or you abandon the message, remove the prepared file. An empty generated scratch subdirectory is removed after delivery. Codex's conversation history can retain the delivered message.
 
 ## Route direct chat
 
@@ -62,7 +66,8 @@ If your host exposes a stable conversation ID and writable conversation state, k
 
 ## Recover an installation
 
-- **Old approval.** Remove any standing approval for the retired `codex.py` prefix. Approve the new read and write prefixes separately. A standing write approval also covers future writable turns and their controls. Use the exact installed prefix. On Windows, use the generated PowerShell quoting. On Linux, use the shell-quoted prefix. Use one-time approval for project-installed launchers. Codex uses `approvalPolicy: never` inside its selected sandbox, so report operations the inner sandbox blocks.
+- **Old approval.** Remove any standing approval for the retired `codex.py` prefix. Approve the new read and write prefixes separately. A standing write approval also covers future writable turns and their controls. Use the generated prefix for your shell and one-time approval for project-installed launchers. Codex uses `approvalPolicy: never` inside its selected sandbox, so report operations the inner sandbox blocks.
+- **Files left after an in-place upgrade.** Use `scripts/setup_runtime.py install --clean-legacy` to remove the old `scripts/.venv` and `steering_linux.py` after the external runtime passes its check. The old environment's locally installed packages are removed with it.
 - **Launcher missing.** Run `scripts/setup_runtime.py install` with the system Python from the installed skill, then reload or restart the host conversation. If the skill files are missing, reinstall the skill.
 - **Cannot reach an active turn.** Read its original task log for canonical working directory, IDs and launcher mode. Use the same operating system account and `CODEX_HOME`. On Linux and macOS, the launcher uses an account-restricted Unix socket under `/tmp`. On Windows, it uses a named pipe with a per-account ACL.
 - **Sign-in or SDK error.** Run `codex login status` under the same operating system user and sign in if needed. For an API provider, check its credentials. If Git is unavailable, install Git or use `--non-git` for a new turn that can skip its repository check.

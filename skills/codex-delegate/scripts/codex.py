@@ -365,7 +365,7 @@ def scratch_message_path(path):
     resolved = path.resolve(strict=True)
     home = Path.home().resolve()
     legacy_roots = {home / ".gemini" / app / "brain" for app in ("antigravity", "antigravity-cli")}
-    in_skill_scratch = resolved.parent.parent == scratch_root()
+    in_skill_scratch = resolved.parent.parent == scratch_root(home)
     in_legacy_scratch = (resolved.parent.name.casefold() == "scratch"
                          and resolved.parent.parent.parent in legacy_roots)
     if not resolved.is_file() or not (in_skill_scratch or in_legacy_scratch):
@@ -374,11 +374,18 @@ def scratch_message_path(path):
 
 
 def remove_delivered_message(path):
-    if path is not None:
+    if path is None:
+        return
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as error:
+        print(f"[codex] Message delivered, but scratch cleanup failed: {error}", file=sys.stderr, flush=True)
+        return
+    if path.parent.parent == scratch_root(Path.home().resolve()):
         try:
-            path.unlink(missing_ok=True)
-        except OSError as error:
-            print(f"[codex] Message delivered, but scratch cleanup failed: {error}", file=sys.stderr, flush=True)
+            path.parent.rmdir()
+        except OSError:
+            pass  # Another message or conversation state may still use this directory.
 
 
 def main(launcher_mode):

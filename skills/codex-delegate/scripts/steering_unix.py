@@ -37,7 +37,8 @@ def own_thread(thread_id):
 
 
 def socket_address(thread_id, turn_id, mode):
-    return runtime_directory() / f"turn-{control_address_key(thread_id, turn_id, mode)}"
+    key = control_address_key(thread_id, turn_id, mode)
+    return runtime_directory() / f"turn-{key[:32]}"
 
 
 def verify_peer(conn):
@@ -50,7 +51,7 @@ def verify_peer(conn):
             raise OSError(err, os.strerror(err))
         peer_uid = uid.value
     else:
-        credentials = struct.Struct("3i")
+        credentials = struct.Struct("iII")
         _, peer_uid, _ = credentials.unpack(conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, credentials.size))
     if peer_uid != os.geteuid():
         raise PermissionError("Control socket belongs to a different operating system user.")
@@ -75,6 +76,11 @@ def write_packet(conn, value):
 
 def control_turn(thread_id, turn_id, mode, action, message=None):
     address = socket_address(thread_id, turn_id, mode)
+    if not address.is_socket():
+        # A turn already running during an upgrade can still own its original address.
+        legacy = address.with_name(f"turn-{control_address_key(thread_id, turn_id, mode)}")
+        if legacy.is_socket():
+            address = legacy
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
         conn.settimeout(3)
         try:
@@ -118,9 +124,15 @@ def steering_endpoint(turn, mode):
                         conn.settimeout(2)
                         try:
                             verify_peer(conn)
-                            request = read_packet(conn)
-                            if not finished.is_set():
-                                write_packet(conn, dispatch_control(turn, request))
+                            try:
+                                request = read_packet(conn)
+                            except ValueError as error:
+                                response = {"error": str(error)}
+                            else:
+                                if finished.is_set():
+                                    continue
+                                response = dispatch_control(turn, request)
+                            write_packet(conn, response)
                         except (EOFError, OSError, ValueError):
                             continue
 
